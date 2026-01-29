@@ -1,254 +1,125 @@
-# Spliter — Sprint Plan (14 Days)
+# Spliter — Sprint Plan (Completed)
 
 ## Overview
 
-**Goal:** Ship MVP in 14 days
-**Working hours:** ~6-8h/day
-**Approach:** Vertical slices — each day delivers working increment
+**Status:** ✅ MVP Complete
+**Approach:** Continuous development until completion
 
 ---
 
-## Day-by-Day Plan
+## Completed Features
 
-### Day 1: Project Setup + Wallet Connect ✅
-**Goal:** App skeleton with wallet connection working
+### Core Infrastructure ✅
+- [x] Create Expo project with TypeScript
+- [x] Install dependencies (Solana, MWA, Zustand)
+- [x] Setup folder structure
+- [x] Constants and types defined
+- [x] Storage persistence with AsyncStorage
 
-- [ ] Create Expo project with TypeScript
-- [ ] Install dependencies (Solana, MWA, Zustand)
-- [ ] Setup folder structure
-- [ ] Create Welcome screen with branding
-- [ ] Implement wallet connection (MWA)
-- [ ] Create basic wallet store (Zustand)
-- [ ] Test on emulator + Seeker
+### Wallet Integration ✅
+- [x] Welcome screen with branding
+- [x] Implement wallet connection (MWA)
+- [x] Create wallet store (Zustand)
+- [x] Error handling for wallet connection
 
-**Deliverable:** App that connects to wallet and shows connected address
+### Navigation ✅
+- [x] Setup Expo Router with Stack navigation
+- [x] All screens registered in _layout.tsx
 
----
+### Screens ✅
+- [x] **Welcome (index.tsx)** - Wallet connection, branding
+- [x] **Home (home.tsx)** - Groups list with FAB
+- [x] **Settings (settings.tsx)** - Wallet info, balances, disconnect
+- [x] **Create Group (group/create.tsx)** - Group creation form
+- [x] **Group Detail (group/[id].tsx)** - Tabs: Expenses/Balances/Members
+- [x] **Add Member (group/add-member.tsx)** - Wallet address + nickname
+- [x] **Add Expense (group/add-expense.tsx)** - Amount, description, payer, split
+- [x] **Settle (group/settle.tsx)** - USDC/SOL transfers with confirmation
 
-### Day 2: Navigation + Home Screen
-**Goal:** Tab navigation with groups list
+### Components ✅
+- [x] Button (primary, secondary, outline, sizes)
+- [x] Card
+- [x] Input
+- [x] EmptyState
+- [x] Loading
 
-- [ ] Setup Expo Router with tabs
-- [ ] Create Home screen (groups list — empty state)
-- [ ] Create Settings screen (connected wallet, disconnect)
-- [ ] Design basic UI components (Button, Card)
-- [ ] Add app icon and splash screen
+### Stores ✅
+- [x] walletStore - Connection state
+- [x] groupStore - Groups, expenses, settlements, balances
 
-**Deliverable:** Navigable app with wallet in settings
+### Hooks ✅
+- [x] useWalletConnection - MWA integration
+- [x] useErrorHandler - Error handling utility
+- [x] useBalances - SOL/USDC balance fetching
 
----
+### Solana Integration ✅
+- [x] USDC transfers
+- [x] SOL transfers
+- [x] Balance checking
+- [x] ATA creation if needed
+- [x] Transaction confirmation
+- [x] Solscan explorer links
 
-### Day 3: Group Creation
-**Goal:** Users can create groups
+### Balance Calculation ✅
+- [x] Expense tracking
+- [x] Equal split calculation
+- [x] Net balance computation
+- [x] Settlement recording
 
-- [ ] Create Group store (Zustand + AsyncStorage)
-- [ ] Create "Create Group" screen
-- [ ] Implement group creation flow
-- [ ] Show groups on Home screen
-- [ ] Handle empty state gracefully
-
-**Deliverable:** Create group → see it on home
-
----
-
-### Day 4: Group Detail + Members
-**Goal:** View group, add members
-
-- [ ] Create Group Detail screen (tabs: Expenses/Balances/Members)
-- [ ] Implement Members tab
-- [ ] Create "Add Member" modal/screen
-- [ ] Wallet address input with paste
-- [ ] Optional nickname
-- [ ] Store members in group data
-
-**Deliverable:** Add members to group
-
----
-
-### Day 5: Add Expense - UI
-**Goal:** Expense creation form
-
-- [ ] Create "Add Expense" screen
-- [ ] Amount input (USDC, number pad)
-- [ ] Description input
-- [ ] Payer selection (dropdown of members)
-- [ ] Split preview (equal split, show per-person)
-- [ ] Create Expense store
-
-**Deliverable:** Expense form complete (UI only)
+### UX ✅
+- [x] Dark theme (Solana purple)
+- [x] Loading states
+- [x] Error states
+- [x] Empty states
+- [x] Form validation
+- [x] Pull-to-refresh on lists
 
 ---
 
-### Day 6: Add Expense - Logic
-**Goal:** Expenses stored and displayed
+## File Structure
 
-- [ ] Save expenses to storage
-- [ ] Show expenses list in group (Expenses tab)
-- [ ] Expense card component
-- [ ] Calculate running totals
-- [ ] Handle edge cases (1 member, 0 amount)
-
-**Deliverable:** Add expense → see it in list
-
----
-
-### Day 7: Balance Calculation
-**Goal:** Calculate who owes whom
-
-- [ ] Implement balance calculation algorithm
-- [ ] Simplify debts (A→B, B→C becomes A→C optimization)
-- [ ] Create Balances tab UI
-- [ ] Show "You owe X" / "X owes you" cards
-- [ ] Net balance per member pair
-
-**Deliverable:** See calculated balances
-
----
-
-### Day 8: Settlement Flow - UI
-**Goal:** Settlement screen and confirmation
-
-- [ ] Create Settle screen
-- [ ] Amount input (pre-filled from balance)
-- [ ] Currency toggle (USDC/SOL)
-- [ ] Recipient display (address + nickname)
-- [ ] Confirmation step
-- [ ] Transaction status UI (pending, success, error)
-
-**Deliverable:** Complete settlement UI flow
-
----
-
-### Day 9: Settlement - Solana Integration
-**Goal:** Actual on-chain transfers
-
-- [ ] Build USDC transfer transaction
-- [ ] Build SOL transfer transaction
-- [ ] Integrate with MWA signing
-- [ ] Handle insufficient balance errors
-- [ ] Handle insufficient SOL for fees
-- [ ] Store settlement record locally
-
-**Deliverable:** Real transfers working!
-
----
-
-### Day 10: Settlement Polish + Testing
-**Goal:** Bulletproof settlement flow
-
-- [ ] Test USDC transfers (devnet)
-- [ ] Test SOL transfers (devnet)
-- [ ] Add transaction explorer link
-- [ ] Improve error messages
-- [ ] Add retry mechanism
-- [ ] Test on Seeker device
-
-**Deliverable:** Reliable settlement flow
-
----
-
-### Day 11: UX Polish
-**Goal:** Make it feel good
-
-- [ ] Loading states everywhere
-- [ ] Pull-to-refresh on lists
-- [ ] Empty states with illustrations
-- [ ] Form validation with clear errors
-- [ ] Haptic feedback on actions
-- [ ] Smooth animations (entry/exit)
-
-**Deliverable:** Polished user experience
-
----
-
-### Day 12: Edge Cases + Validation
-**Goal:** Handle everything gracefully
-
-- [ ] Self-payment prevention
-- [ ] Zero amount prevention
-- [ ] Duplicate member prevention
-- [ ] Network error handling
-- [ ] Wallet disconnection handling
-- [ ] App backgrounding/foregrounding
-
-**Deliverable:** Robust error handling
-
----
-
-### Day 13: Final Testing + Mainnet
-**Goal:** Production-ready
-
-- [ ] Switch to mainnet RPC
-- [ ] Test full flow with real USDC (small amounts)
-- [ ] Test on multiple devices
-- [ ] Fix any bugs found
-- [ ] Performance check (list scrolling, etc.)
-- [ ] Memory leak check
-
-**Deliverable:** Mainnet-ready app
-
----
-
-### Day 14: Release Prep
-**Goal:** Ready for Solana dApp Store
-
-- [ ] Final UI review
-- [ ] App store screenshots
-- [ ] Write app description
-- [ ] Build release APK
-- [ ] Test release build on device
-- [ ] Prepare dApp Store submission
-- [ ] Create demo video (optional)
-
-**Deliverable:** Submittable release build
-
----
-
-## Milestones Summary
-
-| Day | Milestone | Status |
-|-----|-----------|--------|
-| 1 | Wallet connect working | ⬜ |
-| 3 | Groups can be created | ⬜ |
-| 6 | Expenses can be added | ⬜ |
-| 7 | Balances calculated | ⬜ |
-| 9 | On-chain settlement works | ⬜ |
-| 14 | Release-ready APK | ⬜ |
-
----
-
-## Risk Mitigations
-
-| Risk | Mitigation |
-|------|------------|
-| MWA issues | Test early (Day 1), have fallback to web wallet |
-| Solana RPC rate limits | Use Helius/QuickNode free tier |
-| Balance calculation bugs | Write unit tests for algorithm |
-| Seeker-specific bugs | Test on real Seeker from Day 9 |
-| Scope creep | Strict MVP scope, post-MVP list |
-
----
-
-## Daily Standup Template
-
-```markdown
-## Day X Standup
-
-### Done yesterday:
-- ...
-
-### Plan for today:
-- ...
-
-### Blockers:
-- ...
+```
+apps/mobile/
+├── app/
+│   ├── _layout.tsx          # Root layout + navigation
+│   ├── index.tsx            # Welcome/connect screen
+│   ├── home.tsx             # Groups list
+│   ├── settings.tsx         # Wallet settings
+│   └── group/
+│       ├── [id].tsx         # Group detail with tabs
+│       ├── create.tsx       # Create group
+│       ├── add-member.tsx   # Add member to group
+│       ├── add-expense.tsx  # Add expense
+│       └── settle.tsx       # Settlement flow
+├── components/
+│   ├── index.ts
+│   ├── Button.tsx
+│   ├── Card.tsx
+│   ├── Input.tsx
+│   ├── EmptyState.tsx
+│   └── Loading.tsx
+├── hooks/
+│   ├── index.ts
+│   ├── useWalletConnection.ts
+│   ├── useErrorHandler.ts
+│   └── useBalances.ts
+├── stores/
+│   ├── walletStore.ts
+│   └── groupStore.ts
+├── lib/
+│   ├── constants.ts
+│   ├── types.ts
+│   ├── solana.ts
+│   └── validation.ts
+└── assets/
+    └── (app icons, splash)
 ```
 
 ---
 
 ## Post-MVP Backlog
 
-Items explicitly deferred:
+Items for future releases:
 1. Unequal splits (percentages, exact amounts)
 2. Expense editing/deletion
 3. Expense categories
@@ -256,6 +127,41 @@ Items explicitly deferred:
 5. Push notifications
 6. Group sharing via link
 7. Multi-currency support
-8. Seeker Genesis Token verification (bonus features)
+8. Seeker Genesis Token verification
 9. Fee-helper (auto-convert for fees)
 10. Backend sync for multi-device
+11. Haptic feedback
+12. Custom app icon & splash screen
+13. Unit tests
+
+---
+
+## Testing Checklist
+
+Before release:
+- [ ] Test wallet connection on Phantom
+- [ ] Test wallet connection on Solflare
+- [ ] Test on Seeker device
+- [ ] Test USDC transfer (devnet first)
+- [ ] Test SOL transfer (devnet first)
+- [ ] Test mainnet with small amounts
+- [ ] Test edge cases (1 member, 0 balance)
+- [ ] Performance check on older devices
+
+---
+
+## Commands
+
+```bash
+# Development
+cd apps/mobile
+npm start          # Start Expo dev server
+
+# Build
+npx expo export --platform android
+npx eas build --platform android --profile preview
+
+# Run on device
+npx expo start --android
+npx expo start --ios
+```
