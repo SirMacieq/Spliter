@@ -5,23 +5,52 @@
 export const APP_NAME = 'Spliter';
 export const APP_VERSION = '1.0.0';
 
-// Solana Network
-export const SOLANA_NETWORK = process.env.EXPO_PUBLIC_SOLANA_NETWORK || 'mainnet-beta';
-export const SOLANA_RPC_URL = process.env.EXPO_PUBLIC_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
+// Solana Network Configuration
+export type SolanaNetwork = 'mainnet-beta' | 'devnet';
 
-// USDC Mint Addresses
-export const USDC_MINT = {
-  'mainnet-beta': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-  'devnet': '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
-  'testnet': '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+// Network config - can be toggled in settings
+// Default to devnet for safety during development
+let currentNetwork: SolanaNetwork = 'devnet';
+
+export const NETWORK_CONFIG = {
+  'mainnet-beta': {
+    rpcUrl: 'https://api.mainnet-beta.solana.com',
+    usdcMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    explorerUrl: 'https://solscan.io',
+    faucetUrl: null,
+    name: 'Mainnet',
+  },
+  'devnet': {
+    rpcUrl: 'https://api.devnet.solana.com',
+    usdcMint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+    explorerUrl: 'https://solscan.io',
+    faucetUrl: 'https://faucet.solana.com',
+    name: 'Devnet',
+  },
 } as const;
+
+// Getters for current network config
+export const getSolanaNetwork = (): SolanaNetwork => currentNetwork;
+export const setSolanaNetwork = (network: SolanaNetwork) => { currentNetwork = network; };
+
+export const getNetworkConfig = () => NETWORK_CONFIG[currentNetwork];
+export const getSolanaRpcUrl = () => getNetworkConfig().rpcUrl;
+export const getCurrentUsdcMint = () => getNetworkConfig().usdcMint;
+export const getExplorerBaseUrl = () => getNetworkConfig().explorerUrl;
+export const getFaucetUrl = () => getNetworkConfig().faucetUrl;
+export const getNetworkName = () => getNetworkConfig().name;
+
+// Legacy exports for compatibility
+export const SOLANA_NETWORK = currentNetwork;
+export const SOLANA_RPC_URL = getSolanaRpcUrl();
 
 export const USDC_DECIMALS = 6;
 
-// Get current USDC mint based on network
-export const getCurrentUsdcMint = (): string => {
-  return USDC_MINT[SOLANA_NETWORK as keyof typeof USDC_MINT] || USDC_MINT['mainnet-beta'];
-};
+// Minimum SOL required for fees (with buffer)
+export const MIN_SOL_FOR_FEES = 0.005;
+
+// Transaction timeout (30 seconds)
+export const TX_CONFIRMATION_TIMEOUT = 30000;
 
 // Colors
 export const COLORS = {
@@ -43,4 +72,7 @@ export const STORAGE_KEYS = {
   EXPENSES: 'spliter_expenses',
   SETTLEMENTS: 'spliter_settlements',
   SETTINGS: 'spliter_settings',
+  TX_HISTORY: 'spliter_tx_history',
+  WALLET: 'spliter_wallet',
+  APP_HYDRATED: 'spliter_hydrated',
 } as const;

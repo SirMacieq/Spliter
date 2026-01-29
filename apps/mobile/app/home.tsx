@@ -7,19 +7,23 @@ import {
   TouchableOpacity,
   RefreshControl,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import { useGroupStore } from '../stores/groupStore';
+import { useRouter, Stack } from 'expo-router';
+import { useGroupStore, useGroups, useIsGroupsLoading } from '../stores/groupStore';
 import { useWalletPublicKey } from '../stores/walletStore';
-import { Button } from '../components/Button';
+import { Button, NetworkBadge } from '../components';
 import { COLORS } from '../lib/constants';
 import { Group } from '../lib/types';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const groups = useGroupStore((state) => state.groups);
-  const loadData = useGroupStore((state) => state.loadData);
-  const isLoading = useGroupStore((state) => state.isLoading);
+  const groups = useGroups();
+  const hydrate = useGroupStore((state) => state.hydrate);
+  const isLoading = useIsGroupsLoading();
   const publicKey = useWalletPublicKey();
+  
+  const handleSettings = () => {
+    router.push('/settings');
+  };
   
   const handleCreateGroup = () => {
     router.push('/group/create');
@@ -61,42 +65,61 @@ export default function HomeScreen() {
   );
   
   return (
-    <View style={styles.container}>
-      {/* Header with wallet info */}
-      <View style={styles.header}>
-        <Text style={styles.headerLabel}>Connected Wallet</Text>
-        <Text style={styles.walletAddress}>
-          {publicKey ? `${publicKey.slice(0, 4)}...${publicKey.slice(-4)}` : 'Not connected'}
-        </Text>
-      </View>
-      
-      {/* Groups List */}
-      <FlatList
-        data={groups}
-        renderItem={renderGroup}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={renderEmptyState}
-        refreshControl={
-          <RefreshControl
-            refreshing={isLoading}
-            onRefresh={loadData}
-            tintColor={COLORS.primary}
-          />
-        }
+    <>
+      <Stack.Screen 
+        options={{
+          title: 'Spliter',
+          headerRight: () => (
+            <View style={styles.headerRight}>
+              <NetworkBadge />
+              <TouchableOpacity 
+                onPress={handleSettings}
+                style={styles.settingsButton}
+              >
+                <Text style={styles.settingsIcon}>⚙️</Text>
+              </TouchableOpacity>
+            </View>
+          ),
+        }}
       />
+    
+      <View style={styles.container}>
+        {/* Header with wallet info */}
+        <View style={styles.header}>
+          <Text style={styles.headerLabel}>Connected Wallet</Text>
+          <Text style={styles.walletAddress}>
+            {publicKey ? `${publicKey.slice(0, 4)}...${publicKey.slice(-4)}` : 'Not connected'}
+          </Text>
+        </View>
       
-      {/* FAB for creating group */}
-      {groups.length > 0 && (
-        <TouchableOpacity 
-          style={styles.fab}
-          onPress={handleCreateGroup}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.fabText}>+</Text>
-        </TouchableOpacity>
-      )}
-    </View>
+        {/* Groups List */}
+        <FlatList
+          data={groups}
+          renderItem={renderGroup}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          ListEmptyComponent={renderEmptyState}
+          refreshControl={
+            <RefreshControl
+              refreshing={isLoading}
+              onRefresh={hydrate}
+              tintColor={COLORS.primary}
+            />
+          }
+        />
+      
+        {/* FAB for creating group */}
+        {groups.length > 0 && (
+          <TouchableOpacity 
+            style={styles.fab}
+            onPress={handleCreateGroup}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.fabText}>+</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </>
   );
 }
 
@@ -104,6 +127,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  settingsButton: {
+    padding: 8,
+  },
+  settingsIcon: {
+    fontSize: 20,
   },
   header: {
     paddingHorizontal: 20,

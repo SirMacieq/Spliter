@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { 
   View, 
   Text, 
@@ -20,13 +20,22 @@ export default function GroupDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const publicKey = useWalletPublicKey();
-  
-  const group = useGroupStore((state) => state.getGroupById(id || ''));
-  const expenses = useGroupStore((state) => state.getExpensesByGroup(id || ''));
-  const balances = useGroupStore((state) => state.getBalances(id || ''));
-  
+
+  const groupId = typeof id === 'string' ? id : '';
+
+  // Te 3 linie subskrybują store -> UI odświeża się od razu po dodaniu expense
+  const group = useGroupStore((s) => s.getGroupById(groupId));
+  const expenses = useGroupStore((s) => s.getExpensesByGroup(groupId));
+  const settlements = useGroupStore((s) => s.getSettlementsByGroup(groupId));
+
+  // Balances liczymy stabilnie (bez pętli getSnapshot)
+  const balances = useMemo(() => {
+    if (!groupId) return [];
+    return useGroupStore.getState().getBalances(groupId);
+  }, [groupId, group, expenses, settlements]);
+
   const [activeTab, setActiveTab] = useState<TabType>('expenses');
-  
+
   if (!group) {
     return (
       <View style={styles.container}>
@@ -89,8 +98,8 @@ export default function GroupDetailScreen() {
             <TouchableOpacity 
               style={styles.settleButton}
               onPress={() => {
-                // TODO: Navigate to settle screen
-                console.log('Settle:', item);
+                const toWallet = isYouOwing ? item.to : item.from;
+                router.push(`/group/settle?groupId=${id}&to=${toWallet}&amount=${item.amount}`);
               }}
             >
               <Text style={styles.settleButtonText}>Settle</Text>

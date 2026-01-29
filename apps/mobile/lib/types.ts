@@ -1,5 +1,3 @@
-import { PublicKey } from '@solana/web3.js';
-
 // ============================================
 // Core Types for Spliter
 // ============================================
@@ -37,6 +35,7 @@ export interface Settlement {
   currency: 'USDC' | 'SOL';
   txSignature: string;
   settledAt: number;
+  status: TxStatus; // Added for tracking
 }
 
 export interface Balance {
@@ -45,9 +44,48 @@ export interface Balance {
   amount: number; // USDC
 }
 
-// Wallet connection state
+// Transaction status tracking
+export type TxStatus = 'pending' | 'confirmed' | 'failed';
+
+export interface TxHistoryEntry {
+  id: string;
+  signature: string;
+  from: string;
+  to: string;
+  amount: number;
+  currency: 'USDC' | 'SOL';
+  status: TxStatus;
+  createdAt: number;
+  confirmedAt?: number;
+  error?: string;
+  groupId?: string;
+}
+
+// Wallet connection state - now includes 'booting'
+export type WalletStatus = 'booting' | 'disconnected' | 'connecting' | 'connected' | 'error';
+
 export type WalletState = 
+  | { status: 'booting' }
   | { status: 'disconnected' }
   | { status: 'connecting' }
-  | { status: 'connected'; publicKey: string; }
+  | { status: 'connected'; publicKey: string }
   | { status: 'error'; error: string };
+
+// App settings (persisted)
+export interface AppSettings {
+  network: 'mainnet-beta' | 'devnet';
+  lastConnectedWallet?: string;
+}
+
+// Settlement flow state
+export type SettleStatus = 
+  | 'idle' 
+  | 'loading-balance' 
+  | 'confirming' 
+  | 'signing' 
+  | 'pending'      // tx sent, waiting confirmation
+  | 'checking'     // re-checking existing tx
+  | 'success' 
+  | 'error';
+
+export type SettleErrorType = 'fee' | 'balance' | 'network' | 'rejected' | 'timeout' | 'general';

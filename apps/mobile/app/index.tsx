@@ -1,23 +1,32 @@
-import React from 'react';
-import { View, Text, StyleSheet, Image } from 'react-native';
-import { useRouter } from 'expo-router';
-import { useWalletStore, useIsConnected } from '../stores/walletStore';
+import React, { useEffect } from 'react';
+import { View, Text, StyleSheet } from 'react-native';
+import { useRouter, useRootNavigationState } from 'expo-router';
+import { useWalletStore, useIsConnected, useIsBooting } from '../stores/walletStore';
 import { useWalletConnection } from '../hooks/useWalletConnection';
-import { Button } from '../components/Button';
+import { Button, NetworkBadge, SplashScreen } from '../components';
 import { COLORS, APP_NAME } from '../lib/constants';
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const navState = useRootNavigationState();
   const wallet = useWalletStore((state) => state.wallet);
   const isConnected = useIsConnected();
+  const isBooting = useIsBooting();
   const { connect } = useWalletConnection();
   
-  React.useEffect(() => {
-    // Auto-navigate to home when connected
+  useEffect(() => {
+    if (!navState?.key) return;
+    if (isBooting) return;
+    
     if (isConnected) {
       router.replace('/home');
     }
-  }, [isConnected, router]);
+  }, [isConnected, navState?.key, isBooting, router]);
+  
+  // Show splash while booting
+  if (isBooting) {
+    return <SplashScreen />;
+  }
   
   const handleConnect = async () => {
     await connect();
@@ -26,6 +35,9 @@ export default function WelcomeScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.content}>
+        {/* Network Badge */}
+        <NetworkBadge style={styles.networkBadge} />
+        
         {/* Logo */}
         <View style={styles.logoContainer}>
           <Text style={styles.logoEmoji}>💸</Text>
@@ -56,6 +68,7 @@ export default function WelcomeScreen() {
           title={wallet.status === 'connecting' ? 'Connecting...' : 'Connect Wallet'}
           onPress={handleConnect}
           loading={wallet.status === 'connecting'}
+          disabled={wallet.status === 'connecting'}
           size="large"
           style={styles.connectButton}
         />
@@ -80,12 +93,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
     paddingHorizontal: 24,
-    paddingTop: 80,
+    paddingTop: 60,
     paddingBottom: 40,
   },
   content: {
     flex: 1,
     alignItems: 'center',
+  },
+  networkBadge: {
+    marginBottom: 24,
   },
   logoContainer: {
     alignItems: 'center',

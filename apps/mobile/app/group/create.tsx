@@ -37,10 +37,15 @@ export default function CreateGroupScreen() {
     setError('');
     
     try {
+      console.log("DEBUG create.tsx name=", name.trim());
+      console.log("DEBUG create.tsx publicKey=", publicKey, "type=", typeof publicKey, "len=", String(publicKey).length);
+
       const group = await createGroup(name.trim(), publicKey);
       router.replace(`/group/${group.id}`);
-    } catch (err) {
-      setError('Failed to create group');
+    } catch (err: any) {
+      console.log("CREATE GROUP UI ERROR:", err);
+      console.log("CREATE GROUP UI ERROR JSON:", JSON.stringify(err, null, 2));
+      setError(err?.message || "Failed to create group");
       setIsLoading(false);
     }
   };

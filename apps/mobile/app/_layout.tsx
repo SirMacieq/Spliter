@@ -1,17 +1,90 @@
-import { useEffect } from 'react';
-import { Stack } from 'expo-router';
+import 'react-native-get-random-values';
+import { Buffer } from 'buffer';
+import process from 'process';
+
+(globalThis as any).Buffer = Buffer;
+(globalThis as any).process = process;
+
+import { useEffect, useState } from 'react';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View, StyleSheet } from 'react-native';
+import { useWalletStore, useIsConnected, useIsBooting } from '../stores/walletStore';
 import { useGroupStore } from '../stores/groupStore';
+import { useSettingsStore } from '../stores/settingsStore';
+import { SplashScreen } from '../components/SplashScreen';
 import { COLORS } from '../lib/constants';
 
-export default function RootLayout() {
-  const loadData = useGroupStore((state) => state.loadData);
+// Hydration hook - loads all stores before rendering
+function useHydration() {
+  const [isReady, setIsReady] = useState(false);
+  
+  const hydrateWallet = useWalletStore((state) => state.hydrate);
+  const hydrateGroups = useGroupStore((state) => state.hydrate);
+  const hydrateSettings = useSettingsStore((state) => state.hydrate);
   
   useEffect(() => {
-    // Load persisted data on app start
-    loadData();
-  }, [loadData]);
+    const hydrate = async () => {
+      try {
+        // Hydrate all stores in parallel
+        await Promise.all([
+          hydrateSettings(), // Settings first (sets network)
+          hydrateWallet(),
+          hydrateGroups(),
+        ]);
+      } catch (error) {
+        console.error('Hydration error:', error);
+      } finally {
+        setIsReady(true);
+      }
+    };
+    
+    hydrate();
+  }, [hydrateWallet, hydrateGroups, hydrateSettings]);
+  
+  return isReady;
+}
+
+// Route guard hook
+function useProtectedRoute() {
+  const segments = useSegments();
+  const router = useRouter();
+  const isConnected = useIsConnected();
+  const isBooting = useIsBooting();
+  
+  useEffect(() => {
+    // Don't redirect while booting
+    if (isBooting) return;
+    
+    const firstSegment = segments[0] as string | undefined;
+    const inProtectedRoute = firstSegment === 'home' || firstSegment === 'group' || firstSegment === 'settings';
+    
+    if (!isConnected && inProtectedRoute) {
+      // Redirect to welcome if trying to access protected route without connection
+      router.replace('/');
+    }
+  }, [isConnected, segments, isBooting, router]);
+}
+
+export default function RootLayout() {
+  const isHydrated = useHydration();
+  
+  // Show splash while hydrating
+  if (!isHydrated) {
+    return (
+      <View style={styles.container}>
+        <StatusBar style="light" />
+        <SplashScreen />
+      </View>
+    );
+  }
+  
+  return <RootLayoutNav />;
+}
+
+function RootLayoutNav() {
+  // Apply route protection
+  useProtectedRoute();
   
   return (
     <View style={styles.container}>
@@ -28,6 +101,7 @@ export default function RootLayout() {
           contentStyle: {
             backgroundColor: COLORS.background,
           },
+          animation: 'fade',
         }}
       >
         <Stack.Screen 
@@ -39,6 +113,7 @@ export default function RootLayout() {
           options={{ 
             title: 'Spliter',
             headerShown: true,
+            headerBackVisible: false,
           }} 
         />
         <Stack.Screen 
@@ -52,6 +127,33 @@ export default function RootLayout() {
           name="group/[id]" 
           options={{ 
             title: 'Group',
+          }} 
+        />
+        <Stack.Screen 
+          name="group/add-member" 
+          options={{ 
+            title: 'Add Member',
+            presentation: 'modal',
+          }} 
+        />
+        <Stack.Screen 
+          name="group/add-expense" 
+          options={{ 
+            title: 'Add Expense',
+            presentation: 'modal',
+          }} 
+        />
+        <Stack.Screen 
+          name="group/settle" 
+          options={{ 
+            title: 'Settle Up',
+            presentation: 'modal',
+          }} 
+        />
+        <Stack.Screen 
+          name="settings" 
+          options={{ 
+            title: 'Settings',
           }} 
         />
       </Stack>
