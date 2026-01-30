@@ -1,7 +1,8 @@
 export { Button } from './Button';
 export { Card } from './Card';
-export { Input } from './Input';
 export { EmptyState } from './EmptyState';
-export { Loading } from './Loading';
-export { SplashScreen } from './SplashScreen';
+export { Input } from './Input';
+export { Loading, Skeleton } from './Loading';
 export { NetworkBadge } from './NetworkBadge';
+export { SectionHeader } from './SectionHeader';
+export { SplashScreen } from './SplashScreen';

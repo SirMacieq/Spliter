@@ -7,17 +7,19 @@ import {
   TextInputProps,
   ViewStyle,
 } from 'react-native';
-import { COLORS } from '../lib/constants';
+import { COLORS, SPACING, RADIUS, TYPOGRAPHY } from '../lib/constants';
 
 interface InputProps extends TextInputProps {
   label?: string;
   error?: string;
+  hint?: string;
   containerStyle?: ViewStyle;
 }
 
 export const Input: React.FC<InputProps> = ({ 
   label,
   error,
+  hint,
   containerStyle,
   style,
   ...props
@@ -31,39 +33,44 @@ export const Input: React.FC<InputProps> = ({
           error && styles.inputError,
           style,
         ]}
-        placeholderTextColor={COLORS.textSecondary}
+        placeholderTextColor={COLORS.textMuted}
         {...props}
       />
       {error && <Text style={styles.error}>{error}</Text>}
+      {hint && !error && <Text style={styles.hint}>{hint}</Text>}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: 16,
+    marginBottom: SPACING.lg,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '600',
+    ...TYPOGRAPHY.smallMedium,
     color: COLORS.text,
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
   input: {
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
+    ...TYPOGRAPHY.body,
     color: COLORS.text,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: 'transparent',
   },
   inputError: {
     borderColor: COLORS.error,
   },
   error: {
-    fontSize: 12,
+    ...TYPOGRAPHY.caption,
     color: COLORS.error,
-    marginTop: 4,
+    marginTop: SPACING.xs,
+  },
+  hint: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textMuted,
+    marginTop: SPACING.xs,
   },
 });

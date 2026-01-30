@@ -1,12 +1,13 @@
 import React from 'react';
 import { View, ActivityIndicator, Text, StyleSheet, ViewStyle } from 'react-native';
-import { COLORS } from '../lib/constants';
+import { COLORS, SPACING, TYPOGRAPHY } from '../lib/constants';
 
 interface LoadingProps {
   message?: string;
   size?: 'small' | 'large';
   style?: ViewStyle;
   fullScreen?: boolean;
+  color?: string;
 }
 
 export const Loading: React.FC<LoadingProps> = ({
@@ -14,10 +15,11 @@ export const Loading: React.FC<LoadingProps> = ({
   size = 'large',
   style,
   fullScreen = false,
+  color = COLORS.primary,
 }) => {
   const content = (
     <>
-      <ActivityIndicator color={COLORS.primary} size={size} />
+      <ActivityIndicator color={color} size={size} />
       {message && <Text style={styles.message}>{message}</Text>}
     </>
   );
@@ -37,9 +39,34 @@ export const Loading: React.FC<LoadingProps> = ({
   );
 };
 
+// Skeleton loading placeholder
+interface SkeletonProps {
+  width?: number | `${number}%`;
+  height?: number;
+  borderRadius?: number;
+  style?: ViewStyle;
+}
+
+export const Skeleton: React.FC<SkeletonProps> = ({
+  width = '100%' as const,
+  height = 20,
+  borderRadius = 8,
+  style,
+}) => {
+  return (
+    <View 
+      style={[
+        styles.skeleton, 
+        { width: width as any, height, borderRadius },
+        style,
+      ]} 
+    />
+  );
+};
+
 const styles = StyleSheet.create({
   container: {
-    padding: 20,
+    padding: SPACING.xl,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -50,9 +77,12 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
   },
   message: {
-    marginTop: 12,
-    fontSize: 16,
+    marginTop: SPACING.md,
+    ...TYPOGRAPHY.body,
     color: COLORS.textSecondary,
     textAlign: 'center',
+  },
+  skeleton: {
+    backgroundColor: COLORS.surface,
   },
 });

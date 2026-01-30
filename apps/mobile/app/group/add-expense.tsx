@@ -8,13 +8,12 @@ import {
   Platform,
   ScrollView,
   TouchableOpacity,
-  Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { useGroupStore } from '../../stores/groupStore';
 import { useWalletPublicKey } from '../../stores/walletStore';
-import { Button } from '../../components/Button';
-import { COLORS } from '../../lib/constants';
+import { Button, Card, SectionHeader } from '../../components';
+import { COLORS, SPACING, TYPOGRAPHY, RADIUS } from '../../lib/constants';
 import { Member } from '../../lib/types';
 
 export default function AddExpenseScreen() {
@@ -46,13 +45,12 @@ export default function AddExpenseScreen() {
   const getMemberDisplay = (member: Member): string => {
     if (member.nickname) return member.nickname;
     if (member.wallet === publicKey) return 'You';
-    return `${member.wallet.slice(0, 4)}...${member.wallet.slice(-4)}`;
+    return `${member.wallet.slice(0, 4)}···${member.wallet.slice(-4)}`;
   };
   
   const toggleSplitMember = (wallet: string) => {
     const newSet = new Set(splitBetween);
     if (newSet.has(wallet)) {
-      // Don't allow removing all members
       if (newSet.size > 1) {
         newSet.delete(wallet);
       }
@@ -63,12 +61,9 @@ export default function AddExpenseScreen() {
   };
   
   const handleAmountChange = (text: string) => {
-    // Only allow valid decimal numbers
     const cleaned = text.replace(/[^0-9.]/g, '');
-    // Only allow one decimal point
     const parts = cleaned.split('.');
     if (parts.length > 2) return;
-    // Limit decimal places to 2
     if (parts[1]?.length > 2) return;
     setAmount(cleaned);
     setError('');
@@ -76,17 +71,17 @@ export default function AddExpenseScreen() {
   
   const handleAdd = async () => {
     if (!description.trim()) {
-      setError('Please enter a description');
+      setError('Please add a description for this expense');
       return;
     }
     
     if (parsedAmount <= 0) {
-      setError('Please enter a valid amount');
+      setError('Please enter an amount greater than zero');
       return;
     }
     
     if (!paidBy) {
-      setError('Please select who paid');
+      setError('Please select who paid for this expense');
       return;
     }
     
@@ -96,7 +91,7 @@ export default function AddExpenseScreen() {
     }
     
     if (!groupId) {
-      setError('Group not found');
+      setError('Unable to find the group');
       return;
     }
     
@@ -113,7 +108,7 @@ export default function AddExpenseScreen() {
       });
       router.back();
     } catch (err) {
-      setError('Failed to add expense');
+      setError('Something went wrong. Please try again.');
       setIsLoading(false);
     }
   };
@@ -121,7 +116,11 @@ export default function AddExpenseScreen() {
   if (!group) {
     return (
       <View style={styles.container}>
-        <Text style={styles.errorText}>Group not found</Text>
+        <View style={styles.errorState}>
+          <Text style={styles.errorEmoji}>🔍</Text>
+          <Text style={styles.errorText}>Group not found</Text>
+          <Button title="Go Back" onPress={() => router.back()} variant="outline" />
+        </View>
       </View>
     );
   }
@@ -134,96 +133,112 @@ export default function AddExpenseScreen() {
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {/* Amount */}
-          <Text style={styles.label}>Amount (USDC)</Text>
-          <View style={styles.amountContainer}>
-            <Text style={styles.currencySymbol}>$</Text>
-            <TextInput
-              style={styles.amountInput}
-              value={amount}
-              onChangeText={handleAmountChange}
-              placeholder="0.00"
-              placeholderTextColor={COLORS.textSecondary}
-              keyboardType="decimal-pad"
-              autoFocus
-            />
+        <ScrollView 
+          style={styles.content} 
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Amount Input */}
+          <View style={styles.amountSection}>
+            <View style={styles.amountInputContainer}>
+              <Text style={styles.currencySymbol}>$</Text>
+              <TextInput
+                style={styles.amountInput}
+                value={amount}
+                onChangeText={handleAmountChange}
+                placeholder="0.00"
+                placeholderTextColor={COLORS.textMuted}
+                keyboardType="decimal-pad"
+                autoFocus
+              />
+            </View>
+            <Text style={styles.amountLabel}>Amount (USDC)</Text>
           </View>
           
           {/* Description */}
-          <Text style={styles.label}>Description</Text>
-          <TextInput
-            style={styles.input}
-            value={description}
-            onChangeText={(text) => {
-              setDescription(text);
-              setError('');
-            }}
-            placeholder="e.g., Dinner, Uber, Groceries"
-            placeholderTextColor={COLORS.textSecondary}
-            maxLength={100}
-          />
+          <View style={styles.section}>
+            <SectionHeader title="What's this for?" />
+            <TextInput
+              style={styles.descriptionInput}
+              value={description}
+              onChangeText={(text) => {
+                setDescription(text);
+                setError('');
+              }}
+              placeholder="e.g., Dinner, Uber, Groceries..."
+              placeholderTextColor={COLORS.textMuted}
+              maxLength={100}
+            />
+          </View>
           
           {/* Paid By */}
-          <Text style={styles.label}>Paid by</Text>
-          <View style={styles.memberList}>
-            {group.members.map((member) => (
-              <TouchableOpacity
-                key={member.wallet}
-                style={[
-                  styles.memberOption,
-                  paidBy === member.wallet && styles.memberOptionSelected,
-                ]}
-                onPress={() => setPaidBy(member.wallet)}
-              >
-                <Text style={[
-                  styles.memberOptionText,
-                  paidBy === member.wallet && styles.memberOptionTextSelected,
-                ]}>
-                  {getMemberDisplay(member)}
-                </Text>
-              </TouchableOpacity>
-            ))}
+          <View style={styles.section}>
+            <SectionHeader title="Paid by" />
+            <View style={styles.chipContainer}>
+              {group.members.map((member) => {
+                const isSelected = paidBy === member.wallet;
+                return (
+                  <TouchableOpacity
+                    key={member.wallet}
+                    style={[styles.chip, isSelected && styles.chipSelected]}
+                    onPress={() => setPaidBy(member.wallet)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.chipText, isSelected && styles.chipTextSelected]}>
+                      {getMemberDisplay(member)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
           
           {/* Split Between */}
-          <Text style={styles.label}>Split between</Text>
-          <View style={styles.memberList}>
-            {group.members.map((member) => (
-              <TouchableOpacity
-                key={member.wallet}
-                style={[
-                  styles.memberOption,
-                  splitBetween.has(member.wallet) && styles.memberOptionSelected,
-                ]}
-                onPress={() => toggleSplitMember(member.wallet)}
-              >
-                <Text style={[
-                  styles.memberOptionText,
-                  splitBetween.has(member.wallet) && styles.memberOptionTextSelected,
-                ]}>
-                  {getMemberDisplay(member)}
-                </Text>
-                {splitBetween.has(member.wallet) && (
-                  <Text style={styles.checkmark}>✓</Text>
-                )}
-              </TouchableOpacity>
-            ))}
+          <View style={styles.section}>
+            <SectionHeader 
+              title="Split between" 
+              subtitle={`${splitBetween.size} of ${group.members.length} selected`}
+            />
+            <View style={styles.chipContainer}>
+              {group.members.map((member) => {
+                const isSelected = splitBetween.has(member.wallet);
+                return (
+                  <TouchableOpacity
+                    key={member.wallet}
+                    style={[styles.chip, isSelected && styles.chipSelected]}
+                    onPress={() => toggleSplitMember(member.wallet)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.chipText, isSelected && styles.chipTextSelected]}>
+                      {getMemberDisplay(member)}
+                    </Text>
+                    {isSelected && <Text style={styles.checkmark}>✓</Text>}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
           
           {/* Split Preview */}
           {parsedAmount > 0 && splitBetween.size > 0 && (
-            <View style={styles.splitPreview}>
-              <Text style={styles.splitPreviewText}>
-                Split: ${perPersonAmount.toFixed(2)} per person
+            <Card style={styles.previewCard}>
+              <View style={styles.previewRow}>
+                <Text style={styles.previewLabel}>Per person</Text>
+                <Text style={styles.previewAmount}>${perPersonAmount.toFixed(2)}</Text>
+              </View>
+              <View style={styles.previewDivider} />
+              <Text style={styles.previewNote}>
+                Split equally among {splitBetween.size} {splitBetween.size === 1 ? 'person' : 'people'}
               </Text>
-              <Text style={styles.splitPreviewSubtext}>
-                ({splitBetween.size} {splitBetween.size === 1 ? 'person' : 'people'})
-              </Text>
-            </View>
+            </Card>
           )}
           
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+          {/* Error Message */}
+          {error ? (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorBannerText}>{error}</Text>
+            </View>
+          ) : null}
         </ScrollView>
         
         <View style={styles.footer}>
@@ -233,7 +248,7 @@ export default function AddExpenseScreen() {
             loading={isLoading}
             disabled={!amount || !description.trim()}
             size="large"
-            style={styles.addButton}
+            fullWidth
           />
         </View>
       </KeyboardAvoidingView>
@@ -248,106 +263,144 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    padding: 20,
+    padding: SPACING.xl,
   },
-  label: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: COLORS.text,
-    marginBottom: 8,
-    marginTop: 20,
+  
+  // Amount Section
+  amountSection: {
+    alignItems: 'center',
+    paddingVertical: SPACING['2xl'],
+    marginBottom: SPACING.lg,
   },
-  amountContainer: {
+  amountInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    paddingHorizontal: 16,
   },
   currencySymbol: {
-    fontSize: 32,
-    color: COLORS.textSecondary,
-    marginRight: 8,
+    fontSize: 40,
+    color: COLORS.textMuted,
+    marginRight: SPACING.sm,
+    fontWeight: '300',
   },
   amountInput: {
-    flex: 1,
-    fontSize: 32,
+    fontSize: 48,
     color: COLORS.text,
-    paddingVertical: 16,
+    fontWeight: '600',
+    minWidth: 120,
+    textAlign: 'center',
   },
-  input: {
+  amountLabel: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textSecondary,
+    marginTop: SPACING.sm,
+  },
+  
+  // Sections
+  section: {
+    marginBottom: SPACING['2xl'],
+  },
+  descriptionInput: {
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
+    ...TYPOGRAPHY.body,
     color: COLORS.text,
   },
-  memberList: {
+  
+  // Chips
+  chipContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: SPACING.sm,
   },
-  memberOption: {
+  chip: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: COLORS.surface,
-    borderRadius: 20,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderWidth: 2,
+    borderRadius: RADIUS.full,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    borderWidth: 1.5,
     borderColor: 'transparent',
   },
-  memberOptionSelected: {
+  chipSelected: {
     borderColor: COLORS.primary,
-    backgroundColor: COLORS.surfaceLight,
+    backgroundColor: COLORS.primaryMuted,
   },
-  memberOptionText: {
-    fontSize: 14,
+  chipText: {
+    ...TYPOGRAPHY.smallMedium,
     color: COLORS.textSecondary,
   },
-  memberOptionTextSelected: {
+  chipTextSelected: {
     color: COLORS.text,
-    fontWeight: '600',
   },
   checkmark: {
-    marginLeft: 6,
+    marginLeft: SPACING.sm,
     color: COLORS.primary,
     fontWeight: 'bold',
+    fontSize: 14,
   },
-  splitPreview: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 16,
-    marginTop: 20,
+  
+  // Preview Card
+  previewCard: {
+    marginTop: SPACING.lg,
+    backgroundColor: COLORS.surfaceLight,
+  },
+  previewRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
   },
-  splitPreviewText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: COLORS.text,
-  },
-  splitPreviewSubtext: {
-    fontSize: 14,
+  previewLabel: {
+    ...TYPOGRAPHY.body,
     color: COLORS.textSecondary,
-    marginTop: 4,
   },
-  error: {
-    color: COLORS.error,
-    fontSize: 14,
-    marginTop: 16,
+  previewAmount: {
+    ...TYPOGRAPHY.h2,
+    color: COLORS.success,
+  },
+  previewDivider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: SPACING.md,
+  },
+  previewNote: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textMuted,
     textAlign: 'center',
+  },
+  
+  // Error States
+  errorState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: SPACING['4xl'],
+  },
+  errorEmoji: {
+    fontSize: 48,
+    marginBottom: SPACING.lg,
   },
   errorText: {
+    ...TYPOGRAPHY.h3,
     color: COLORS.error,
-    fontSize: 16,
+    marginBottom: SPACING['2xl'],
+  },
+  errorBanner: {
+    backgroundColor: COLORS.errorMuted,
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
+    marginTop: SPACING.lg,
+  },
+  errorBannerText: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.error,
     textAlign: 'center',
-    marginTop: 40,
   },
+  
+  // Footer
   footer: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  addButton: {
-    width: '100%',
+    padding: SPACING.xl,
+    paddingBottom: SPACING['4xl'],
   },
 });

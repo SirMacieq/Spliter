@@ -10,8 +10,8 @@ import {
 import { useRouter, Stack } from 'expo-router';
 import { useGroupStore, useGroups, useIsGroupsLoading } from '../stores/groupStore';
 import { useWalletPublicKey } from '../stores/walletStore';
-import { Button, NetworkBadge } from '../components';
-import { COLORS } from '../lib/constants';
+import { Button, NetworkBadge, EmptyState, Card } from '../components';
+import { COLORS, SPACING, TYPOGRAPHY, RADIUS } from '../lib/constants';
 import { Group } from '../lib/types';
 
 export default function HomeScreen() {
@@ -34,33 +34,48 @@ export default function HomeScreen() {
   };
   
   const renderGroup = ({ item }: { item: Group }) => (
-    <TouchableOpacity 
+    <Card 
       style={styles.groupCard}
       onPress={() => handleGroupPress(item)}
-      activeOpacity={0.7}
     >
-      <View style={styles.groupInfo}>
-        <Text style={styles.groupName}>{item.name}</Text>
-        <Text style={styles.groupMembers}>
-          {item.members.length} member{item.members.length !== 1 ? 's' : ''}
-        </Text>
+      <View style={styles.groupContent}>
+        <View style={styles.groupAvatar}>
+          <Text style={styles.groupAvatarText}>
+            {item.name.charAt(0).toUpperCase()}
+          </Text>
+        </View>
+        <View style={styles.groupInfo}>
+          <Text style={styles.groupName} numberOfLines={1}>{item.name}</Text>
+          <Text style={styles.groupMembers}>
+            {item.members.length} member{item.members.length !== 1 ? 's' : ''}
+          </Text>
+        </View>
+        <View style={styles.groupArrowContainer}>
+          <Text style={styles.groupArrow}>›</Text>
+        </View>
       </View>
-      <Text style={styles.groupArrow}>→</Text>
-    </TouchableOpacity>
+    </Card>
   );
   
   const renderEmptyState = () => (
-    <View style={styles.emptyState}>
-      <Text style={styles.emptyEmoji}>👋</Text>
-      <Text style={styles.emptyTitle}>No groups yet</Text>
-      <Text style={styles.emptyText}>
-        Create your first group to start splitting expenses with friends.
-      </Text>
-      <Button
-        title="Create Group"
-        onPress={handleCreateGroup}
-        style={styles.emptyButton}
-      />
+    <EmptyState
+      emoji="👋"
+      title="No groups yet"
+      message="Create your first group to start splitting expenses with friends."
+      actionLabel="Create Group"
+      onAction={handleCreateGroup}
+    />
+  );
+  
+  const renderHeader = () => (
+    <View style={styles.walletCard}>
+      <View style={styles.walletInfo}>
+        <Text style={styles.walletLabel}>Connected Wallet</Text>
+        <Text style={styles.walletAddress}>
+          {publicKey ? `${publicKey.slice(0, 6)}···${publicKey.slice(-4)}` : 'Not connected'}
+        </Text>
+      </View>
+      <NetworkBadge />
     </View>
   );
   
@@ -70,35 +85,26 @@ export default function HomeScreen() {
         options={{
           title: 'Spliter',
           headerRight: () => (
-            <View style={styles.headerRight}>
-              <NetworkBadge />
-              <TouchableOpacity 
-                onPress={handleSettings}
-                style={styles.settingsButton}
-              >
-                <Text style={styles.settingsIcon}>⚙️</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity 
+              onPress={handleSettings}
+              style={styles.settingsButton}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.settingsIcon}>⚙️</Text>
+            </TouchableOpacity>
           ),
         }}
       />
     
       <View style={styles.container}>
-        {/* Header with wallet info */}
-        <View style={styles.header}>
-          <Text style={styles.headerLabel}>Connected Wallet</Text>
-          <Text style={styles.walletAddress}>
-            {publicKey ? `${publicKey.slice(0, 4)}...${publicKey.slice(-4)}` : 'Not connected'}
-          </Text>
-        </View>
-      
-        {/* Groups List */}
         <FlatList
           data={groups}
           renderItem={renderGroup}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
+          ListHeaderComponent={renderHeader}
           ListEmptyComponent={renderEmptyState}
+          showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
               refreshing={isLoading}
@@ -108,12 +114,11 @@ export default function HomeScreen() {
           }
         />
       
-        {/* FAB for creating group */}
         {groups.length > 0 && (
           <TouchableOpacity 
             style={styles.fab}
             onPress={handleCreateGroup}
-            activeOpacity={0.8}
+            activeOpacity={0.85}
           >
             <Text style={styles.fabText}>+</Text>
           </TouchableOpacity>
@@ -128,109 +133,110 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
-  headerRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
   settingsButton: {
-    padding: 8,
+    padding: SPACING.sm,
+    marginRight: SPACING.xs,
   },
   settingsIcon: {
-    fontSize: 20,
-  },
-  header: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.surface,
-  },
-  headerLabel: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginBottom: 4,
-  },
-  walletAddress: {
-    fontSize: 16,
-    color: COLORS.text,
-    fontFamily: 'monospace',
+    fontSize: 22,
   },
   listContent: {
-    padding: 20,
+    padding: SPACING.xl,
+    paddingBottom: 100,
     flexGrow: 1,
   },
-  groupCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+  
+  // Wallet Card
+  walletCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.lg,
+    marginBottom: SPACING['2xl'],
+  },
+  walletInfo: {
+    flex: 1,
+  },
+  walletLabel: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.xs,
+  },
+  walletAddress: {
+    ...TYPOGRAPHY.bodyMedium,
+    color: COLORS.text,
+    fontFamily: 'monospace',
+  },
+  
+  // Group Cards
+  groupCard: {
+    marginBottom: SPACING.md,
+    padding: SPACING.lg,
+  },
+  groupContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  groupAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.primaryMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: SPACING.md,
+  },
+  groupAvatarText: {
+    ...TYPOGRAPHY.h3,
+    color: COLORS.primary,
   },
   groupInfo: {
     flex: 1,
   },
   groupName: {
-    fontSize: 18,
-    fontWeight: '600',
+    ...TYPOGRAPHY.bodyMedium,
     color: COLORS.text,
-    marginBottom: 4,
+    marginBottom: SPACING.xs,
   },
   groupMembers: {
-    fontSize: 14,
+    ...TYPOGRAPHY.small,
     color: COLORS.textSecondary,
   },
-  groupArrow: {
-    fontSize: 20,
-    color: COLORS.textSecondary,
-  },
-  emptyState: {
-    flex: 1,
+  groupArrowContainer: {
+    width: 24,
+    height: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 40,
   },
-  emptyEmoji: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  emptyTitle: {
+  groupArrow: {
     fontSize: 24,
-    fontWeight: '600',
-    color: COLORS.text,
-    marginBottom: 8,
+    color: COLORS.textMuted,
+    fontWeight: '300',
   },
-  emptyText: {
-    fontSize: 16,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    marginBottom: 24,
-    lineHeight: 24,
-  },
-  emptyButton: {
-    paddingHorizontal: 32,
-  },
+  
+  // FAB
   fab: {
     position: 'absolute',
-    right: 20,
-    bottom: 20,
+    right: SPACING.xl,
+    bottom: SPACING['3xl'],
     width: 56,
     height: 56,
     borderRadius: 28,
     backgroundColor: COLORS.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
+    elevation: 6,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
   },
   fabText: {
-    fontSize: 32,
+    fontSize: 28,
     color: COLORS.text,
-    fontWeight: '300',
+    fontWeight: '400',
     marginTop: -2,
   },
 });

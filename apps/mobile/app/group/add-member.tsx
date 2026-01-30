@@ -6,14 +6,13 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
-  Clipboard,
   TouchableOpacity,
-  Alert,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { useGroupStore } from '../../stores/groupStore';
-import { Button } from '../../components/Button';
-import { COLORS } from '../../lib/constants';
+import { Button, SectionHeader } from '../../components';
+import { COLORS, SPACING, TYPOGRAPHY, RADIUS } from '../../lib/constants';
 import { PublicKey } from '@solana/web3.js';
 
 export default function AddMemberScreen() {
@@ -38,7 +37,7 @@ export default function AddMemberScreen() {
   
   const handlePaste = async () => {
     try {
-      const text = await Clipboard.getString();
+      const text = await Clipboard.getStringAsync();
       if (text) {
         setWallet(text.trim());
         setError('');
@@ -57,18 +56,17 @@ export default function AddMemberScreen() {
     }
     
     if (!validateWalletAddress(trimmedWallet)) {
-      setError('Invalid Solana wallet address');
+      setError('This doesn\'t look like a valid Solana address');
       return;
     }
     
     if (!groupId) {
-      setError('Group not found');
+      setError('Unable to find the group');
       return;
     }
     
-    // Check if already a member
     if (group?.members.some(m => m.wallet === trimmedWallet)) {
-      setError('This wallet is already a member');
+      setError('This wallet is already a member of the group');
       return;
     }
     
@@ -79,7 +77,7 @@ export default function AddMemberScreen() {
       await addMember(groupId, trimmedWallet, nickname.trim() || undefined);
       router.back();
     } catch (err) {
-      setError('Failed to add member');
+      setError('Something went wrong. Please try again.');
       setIsLoading(false);
     }
   };
@@ -87,7 +85,11 @@ export default function AddMemberScreen() {
   if (!group) {
     return (
       <View style={styles.container}>
-        <Text style={styles.errorText}>Group not found</Text>
+        <View style={styles.errorState}>
+          <Text style={styles.errorEmoji}>🔍</Text>
+          <Text style={styles.errorTitle}>Group not found</Text>
+          <Button title="Go Back" onPress={() => router.back()} variant="outline" />
+        </View>
       </View>
     );
   }
@@ -102,44 +104,54 @@ export default function AddMemberScreen() {
       >
         <View style={styles.content}>
           {/* Wallet Address */}
-          <Text style={styles.label}>Wallet Address *</Text>
-          <View style={styles.inputRow}>
-            <TextInput
-              style={styles.input}
-              value={wallet}
-              onChangeText={(text) => {
-                setWallet(text);
-                setError('');
-              }}
-              placeholder="e.g., 7xKX..."
-              placeholderTextColor={COLORS.textSecondary}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <TouchableOpacity 
-              style={styles.pasteButton}
-              onPress={handlePaste}
-            >
-              <Text style={styles.pasteButtonText}>Paste</Text>
-            </TouchableOpacity>
+          <View style={styles.section}>
+            <SectionHeader title="Wallet Address" />
+            <View style={styles.inputRow}>
+              <TextInput
+                style={styles.walletInput}
+                value={wallet}
+                onChangeText={(text) => {
+                  setWallet(text);
+                  setError('');
+                }}
+                placeholder="Solana wallet address..."
+                placeholderTextColor={COLORS.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoFocus
+              />
+              <TouchableOpacity 
+                style={styles.pasteButton}
+                onPress={handlePaste}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.pasteButtonText}>Paste</Text>
+              </TouchableOpacity>
+            </View>
           </View>
           
           {/* Nickname */}
-          <Text style={styles.label}>Nickname (optional)</Text>
-          <TextInput
-            style={styles.inputFull}
-            value={nickname}
-            onChangeText={setNickname}
-            placeholder="e.g., Alice, Bob"
-            placeholderTextColor={COLORS.textSecondary}
-            maxLength={30}
-          />
+          <View style={styles.section}>
+            <SectionHeader title="Nickname" subtitle="Optional" />
+            <TextInput
+              style={styles.input}
+              value={nickname}
+              onChangeText={setNickname}
+              placeholder="e.g., Alice, Bob, Mom..."
+              placeholderTextColor={COLORS.textMuted}
+              maxLength={30}
+            />
+            <Text style={styles.hint}>
+              Makes it easier to identify members in the group.
+            </Text>
+          </View>
           
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-          
-          <Text style={styles.hint}>
-            Enter a Solana wallet address. The nickname helps you identify members easily.
-          </Text>
+          {/* Error */}
+          {error ? (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
         </View>
         
         <View style={styles.footer}>
@@ -149,7 +161,7 @@ export default function AddMemberScreen() {
             loading={isLoading}
             disabled={!wallet.trim()}
             size="large"
-            style={styles.addButton}
+            fullWidth
           />
         </View>
       </KeyboardAvoidingView>
@@ -164,68 +176,73 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    padding: 20,
+    padding: SPACING.xl,
   },
-  label: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: COLORS.text,
-    marginBottom: 8,
-    marginTop: 16,
+  section: {
+    marginBottom: SPACING['2xl'],
   },
   inputRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: SPACING.md,
   },
-  input: {
+  walletInput: {
     flex: 1,
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
+    ...TYPOGRAPHY.body,
     color: COLORS.text,
     fontFamily: 'monospace',
   },
-  inputFull: {
+  input: {
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
+    ...TYPOGRAPHY.body,
     color: COLORS.text,
   },
   pasteButton: {
     backgroundColor: COLORS.surfaceLight,
-    borderRadius: 12,
-    paddingHorizontal: 20,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: SPACING.xl,
     justifyContent: 'center',
   },
   pasteButtonText: {
+    ...TYPOGRAPHY.bodyMedium,
     color: COLORS.primary,
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  error: {
-    color: COLORS.error,
-    fontSize: 14,
-    marginTop: 12,
-  },
-  errorText: {
-    color: COLORS.error,
-    fontSize: 16,
-    textAlign: 'center',
-    marginTop: 40,
   },
   hint: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 16,
+    ...TYPOGRAPHY.small,
+    color: COLORS.textMuted,
+    marginTop: SPACING.sm,
+  },
+  errorState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: SPACING['4xl'],
+  },
+  errorEmoji: {
+    fontSize: 48,
+    marginBottom: SPACING.lg,
+  },
+  errorTitle: {
+    ...TYPOGRAPHY.h3,
+    color: COLORS.error,
+    marginBottom: SPACING['2xl'],
+  },
+  errorContainer: {
+    backgroundColor: COLORS.errorMuted,
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
+  },
+  errorText: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.error,
+    textAlign: 'center',
   },
   footer: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  addButton: {
-    width: '100%',
+    padding: SPACING.xl,
+    paddingBottom: SPACING['4xl'],
   },
 });

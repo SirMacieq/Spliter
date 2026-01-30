@@ -15,8 +15,8 @@ import * as Clipboard from 'expo-clipboard';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { useGroupStore } from '../../stores/groupStore';
 import { useWalletPublicKey } from '../../stores/walletStore';
-import { Button, NetworkBadge } from '../../components';
-import { COLORS, MIN_SOL_FOR_FEES, getFaucetUrl, getNetworkName } from '../../lib/constants';
+import { Button, Card, NetworkBadge } from '../../components';
+import { COLORS, SPACING, TYPOGRAPHY, RADIUS, MIN_SOL_FOR_FEES, getFaucetUrl, getNetworkName } from '../../lib/constants';
 import { 
   sendUsdcTransfer,
   sendSolTransfer,
@@ -56,18 +56,16 @@ export default function SettleScreen() {
   const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
   const [solBalance, setSolBalance] = useState<number | null>(null);
   
-  // Guard against double-send
   const isSendingRef = useRef(false);
   
   const recipient = group?.members.find(m => m.wallet === to);
   const recipientDisplay = recipient?.nickname || 
-    (to ? `${to.slice(0, 4)}...${to.slice(-4)}` : 'Unknown');
+    (to ? `${to.slice(0, 6)}···${to.slice(-4)}` : 'Unknown');
   
   const networkName = getNetworkName();
   const faucetUrl = getFaucetUrl();
   const parsedAmount = parseFloat(amount) || 0;
   
-  // Load balances
   const loadBalances = useCallback(async () => {
     if (!publicKey) return;
     
@@ -84,12 +82,12 @@ export default function SettleScreen() {
       setSolBalance(sol);
       
       if (sol < MIN_SOL_FOR_FEES) {
-        setError(`Low SOL balance! You need ~${MIN_SOL_FOR_FEES} SOL for fees.`);
+        setError(`You need about ${MIN_SOL_FOR_FEES} SOL to cover transaction fees`);
         setErrorType('fee');
       }
     } catch (err) {
       console.error('Failed to load balances:', err);
-      setError('Failed to load balances. Check connection.');
+      setError('Unable to load balances. Please check your connection.');
       setErrorType('network');
     }
     setStatus('idle');
@@ -112,25 +110,25 @@ export default function SettleScreen() {
   
   const validateAmount = (): boolean => {
     if (solBalance !== null && solBalance < MIN_SOL_FOR_FEES) {
-      setError(`Insufficient SOL for fees. Need ~${MIN_SOL_FOR_FEES} SOL.`);
+      setError(`You need about ${MIN_SOL_FOR_FEES} SOL for transaction fees`);
       setErrorType('fee');
       return false;
     }
     
     if (parsedAmount <= 0) {
-      setError('Please enter a valid amount');
+      setError('Please enter an amount greater than zero');
       setErrorType('general');
       return false;
     }
     
     if (currency === 'USDC') {
       if (usdcBalance === null || usdcBalance === 0) {
-        setError('You don\'t have any USDC.');
+        setError('You don\'t have any USDC to send');
         setErrorType('balance');
         return false;
       }
       if (parsedAmount > usdcBalance) {
-        setError(`Insufficient USDC. Have $${usdcBalance.toFixed(2)}`);
+        setError(`You only have $${usdcBalance.toFixed(2)} USDC available`);
         setErrorType('balance');
         return false;
       }
@@ -139,7 +137,7 @@ export default function SettleScreen() {
     if (currency === 'SOL') {
       const maxSendable = (solBalance ?? 0) - MIN_SOL_FOR_FEES;
       if (parsedAmount > maxSendable) {
-        setError(`Max sendable: ${Math.max(0, maxSendable).toFixed(4)} SOL`);
+        setError(`Maximum you can send: ${Math.max(0, maxSendable).toFixed(4)} SOL`);
         setErrorType('balance');
         return false;
       }
@@ -157,9 +155,7 @@ export default function SettleScreen() {
     setStatus('confirming');
   };
   
-  // Send transaction
   const handleSendTransaction = async () => {
-    // Double-send guard
     if (isSendingRef.current || txSignature) {
       console.warn('Prevented double-send');
       return;
@@ -177,14 +173,12 @@ export default function SettleScreen() {
     setErrorType(null);
     
     try {
-      // Send transaction (doesn't wait for confirmation)
       const signature = currency === 'USDC'
         ? await sendUsdcTransfer(publicKey, to, parsedAmount)
         : await sendSolTransfer(publicKey, to, parsedAmount);
       
       setTxSignature(signature);
       
-      // Record pending tx
       await addTxHistory({
         signature,
         from: publicKey,
@@ -195,12 +189,10 @@ export default function SettleScreen() {
         groupId,
       });
       
-      // Now wait for confirmation
       setStatus('pending');
       const result = await waitForConfirmation(signature);
       
       if (result.status === 'confirmed') {
-        // Record settlement
         await addSettlement({
           groupId,
           from: publicKey,
@@ -218,10 +210,8 @@ export default function SettleScreen() {
         setErrorType('general');
         setStatus('error');
       } else {
-        // Still pending after timeout
-        setError('Confirmation taking longer than expected');
+        setError('Taking longer than expected. You can check the status below.');
         setErrorType('timeout');
-        // Keep status as 'pending' to allow "Check status"
       }
     } catch (err: any) {
       console.error('Settlement error:', err);
@@ -230,7 +220,6 @@ export default function SettleScreen() {
       setErrorType(type);
       
       if (type === 'rejected') {
-        // User cancelled - reset to idle, allow retry
         setTxSignature(null);
         setStatus('idle');
       } else {
@@ -241,7 +230,6 @@ export default function SettleScreen() {
     }
   };
   
-  // Check status of existing transaction (no re-send)
   const handleCheckStatus = async () => {
     if (!txSignature) return;
     
@@ -252,7 +240,6 @@ export default function SettleScreen() {
       const result = await checkTransactionStatus(txSignature);
       
       if (result.status === 'confirmed') {
-        // Record settlement if not already
         if (publicKey && to && groupId) {
           await addSettlement({
             groupId,
@@ -272,18 +259,17 @@ export default function SettleScreen() {
         setErrorType('general');
         setStatus('error');
       } else {
-        setError('Still pending. Try again in a moment.');
+        setError('Still processing. Try again in a moment.');
         setErrorType('timeout');
         setStatus('pending');
       }
     } catch (err: any) {
-      setError('Failed to check status');
+      setError('Unable to check status');
       setErrorType('network');
       setStatus('pending');
     }
   };
   
-  // Retry: if no signature, allow new send; if signature exists, only check status
   const handleRetry = () => {
     if (txSignature) {
       handleCheckStatus();
@@ -316,7 +302,12 @@ export default function SettleScreen() {
   if (!group || !to) {
     return (
       <View style={styles.container}>
-        <Text style={styles.errorText}>Invalid settlement</Text>
+        <View style={styles.centerContent}>
+          <Text style={styles.errorEmoji}>🔍</Text>
+          <Text style={styles.errorTitle}>Invalid Settlement</Text>
+          <Text style={styles.errorMessage}>Unable to find the payment details.</Text>
+          <Button title="Go Back" onPress={handleDone} variant="outline" />
+        </View>
       </View>
     );
   }
@@ -328,72 +319,69 @@ export default function SettleScreen() {
         <Stack.Screen options={{ title: 'Payment Sent' }} />
         <View style={styles.container}>
           <View style={styles.centerContent}>
-            <Text style={styles.successEmoji}>✅</Text>
+            <View style={styles.successIcon}>
+              <Text style={styles.successIconText}>✓</Text>
+            </View>
             <Text style={styles.successTitle}>Payment Sent!</Text>
             <Text style={styles.successAmount}>
               {currency === 'USDC' ? '$' : ''}{parsedAmount.toFixed(currency === 'USDC' ? 2 : 4)} {currency}
             </Text>
             <Text style={styles.successRecipient}>to {recipientDisplay}</Text>
             
-            <View style={styles.signatureBox}>
-              <Text style={styles.signatureLabel}>Transaction</Text>
-              <Text style={styles.signatureText} numberOfLines={1}>
-                {txSignature.slice(0, 20)}...{txSignature.slice(-8)}
+            <Card style={styles.txCard}>
+              <Text style={styles.txLabel}>Transaction ID</Text>
+              <Text style={styles.txSignature} numberOfLines={1}>
+                {txSignature.slice(0, 16)}···{txSignature.slice(-8)}
               </Text>
-            </View>
+            </Card>
             
-            <View style={styles.actionButtons}>
-              <TouchableOpacity style={styles.actionBtn} onPress={handleViewExplorer}>
-                <Text style={styles.actionBtnText}>View on Solscan</Text>
+            <View style={styles.actionRow}>
+              <TouchableOpacity style={styles.actionButton} onPress={handleViewExplorer}>
+                <Text style={styles.actionButtonText}>View on Solscan</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.actionBtn} onPress={handleCopySignature}>
-                <Text style={styles.actionBtnText}>
-                  {copiedSignature ? '✓ Copied' : 'Copy Signature'}
+              <TouchableOpacity style={styles.actionButton} onPress={handleCopySignature}>
+                <Text style={styles.actionButtonText}>
+                  {copiedSignature ? '✓ Copied' : 'Copy ID'}
                 </Text>
               </TouchableOpacity>
             </View>
             
-            <NetworkBadge style={styles.networkBadge} />
+            <NetworkBadge style={styles.badge} />
           </View>
           
-          <View style={styles.footerSingle}>
-            <Button title="Done" onPress={handleDone} size="large" />
+          <View style={styles.footer}>
+            <Button title="Done" onPress={handleDone} size="large" fullWidth />
           </View>
         </View>
       </>
     );
   }
   
-  // ========== PENDING SCREEN (timeout, waiting) ==========
+  // ========== PENDING SCREEN ==========
   if (status === 'pending' && txSignature) {
     return (
       <>
-        <Stack.Screen options={{ title: 'Pending...' }} />
+        <Stack.Screen options={{ title: 'Processing...' }} />
         <View style={styles.container}>
           <View style={styles.centerContent}>
-            <ActivityIndicator color={COLORS.warning} size="large" />
-            <Text style={styles.pendingTitle}>Transaction Pending</Text>
-            <Text style={styles.pendingText}>
-              Your transaction was sent but confirmation is taking longer than expected.
+            <ActivityIndicator color={COLORS.warning} size="large" style={styles.spinner} />
+            <Text style={styles.pendingTitle}>Processing Payment</Text>
+            <Text style={styles.pendingMessage}>
+              Your payment has been sent and is being confirmed on the blockchain.
             </Text>
             
-            <View style={styles.signatureBox}>
-              <Text style={styles.signatureLabel}>Transaction</Text>
-              <Text style={styles.signatureText} numberOfLines={1}>
-                {txSignature.slice(0, 20)}...{txSignature.slice(-8)}
+            <Card style={styles.txCard}>
+              <Text style={styles.txLabel}>Transaction ID</Text>
+              <Text style={styles.txSignature} numberOfLines={1}>
+                {txSignature.slice(0, 16)}···{txSignature.slice(-8)}
               </Text>
-            </View>
+            </Card>
             
             {error && <Text style={styles.warningText}>{error}</Text>}
             
-            <View style={styles.actionButtons}>
-              <TouchableOpacity style={styles.actionBtn} onPress={handleViewExplorer}>
-                <Text style={styles.actionBtnText}>View on Solscan</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.actionBtn} onPress={handleCopySignature}>
-                <Text style={styles.actionBtnText}>
-                  {copiedSignature ? '✓ Copied' : 'Copy Signature'}
-                </Text>
+            <View style={styles.actionRow}>
+              <TouchableOpacity style={styles.actionButton} onPress={handleViewExplorer}>
+                <Text style={styles.actionButtonText}>View on Solscan</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -403,14 +391,14 @@ export default function SettleScreen() {
               title="Check Status" 
               onPress={handleCheckStatus} 
               size="large" 
-              style={styles.flexBtn}
+              style={styles.flexButton}
             />
             <Button 
               title="Close" 
               onPress={handleDone} 
               variant="outline" 
               size="large"
-              style={styles.flexBtn}
+              style={styles.flexButton}
             />
           </View>
         </View>
@@ -422,25 +410,27 @@ export default function SettleScreen() {
   if (status === 'error') {
     return (
       <>
-        <Stack.Screen options={{ title: 'Error' }} />
+        <Stack.Screen options={{ title: 'Payment Failed' }} />
         <View style={styles.container}>
           <View style={styles.centerContent}>
-            <Text style={styles.errorEmoji}>❌</Text>
-            <Text style={styles.errorTitle}>Transaction Failed</Text>
+            <View style={styles.errorIcon}>
+              <Text style={styles.errorIconText}>!</Text>
+            </View>
+            <Text style={styles.errorTitle}>Payment Failed</Text>
             <Text style={styles.errorMessage}>{error}</Text>
             
             {txSignature && (
-              <View style={styles.signatureBox}>
-                <Text style={styles.signatureLabel}>Transaction</Text>
-                <Text style={styles.signatureText} numberOfLines={1}>
-                  {txSignature.slice(0, 20)}...{txSignature.slice(-8)}
+              <Card style={styles.txCard}>
+                <Text style={styles.txLabel}>Transaction ID</Text>
+                <Text style={styles.txSignature} numberOfLines={1}>
+                  {txSignature.slice(0, 16)}···{txSignature.slice(-8)}
                 </Text>
-              </View>
+              </Card>
             )}
             
             {errorType === 'fee' && faucetUrl && (
-              <TouchableOpacity style={styles.helpBtn} onPress={handleOpenFaucet}>
-                <Text style={styles.helpBtnText}>Get {networkName} SOL →</Text>
+              <TouchableOpacity style={styles.helpLink} onPress={handleOpenFaucet}>
+                <Text style={styles.helpLinkText}>Get {networkName} SOL →</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -450,14 +440,14 @@ export default function SettleScreen() {
               title={txSignature ? "Check Status" : "Try Again"} 
               onPress={handleRetry} 
               size="large"
-              style={styles.flexBtn}
+              style={styles.flexButton}
             />
             <Button 
               title="Cancel" 
               onPress={handleDone} 
               variant="outline" 
               size="large"
-              style={styles.flexBtn}
+              style={styles.flexButton}
             />
           </View>
         </View>
@@ -473,44 +463,50 @@ export default function SettleScreen() {
         <View style={styles.container}>
           <View style={styles.centerContent}>
             <ActivityIndicator color={COLORS.primary} size="large" />
-            <Text style={styles.signingText}>Checking transaction status...</Text>
+            <Text style={styles.checkingText}>Checking transaction status...</Text>
           </View>
         </View>
       </>
     );
   }
   
-  // ========== CONFIRMATION / SIGNING SCREEN ==========
+  // ========== CONFIRMATION SCREEN ==========
   if (status === 'confirming' || status === 'signing') {
     return (
       <>
         <Stack.Screen options={{ title: 'Confirm Payment' }} />
         <View style={styles.container}>
-          <ScrollView style={styles.content}>
-            <Text style={styles.confirmTitle}>Confirm Payment</Text>
+          <ScrollView style={styles.scrollContent}>
+            <View style={styles.confirmHeader}>
+              <Text style={styles.confirmTitle}>Review Payment</Text>
+              <Text style={styles.confirmSubtitle}>Please confirm the details below</Text>
+            </View>
             
-            <View style={styles.confirmCard}>
+            <Card style={styles.confirmCard}>
               <Text style={styles.confirmLabel}>Amount</Text>
-              <Text style={styles.confirmValue}>
+              <Text style={styles.confirmAmount}>
                 {currency === 'USDC' ? '$' : ''}{parsedAmount.toFixed(currency === 'USDC' ? 2 : 4)} {currency}
               </Text>
-            </View>
+            </Card>
             
-            <View style={styles.confirmCard}>
-              <Text style={styles.confirmLabel}>To</Text>
+            <Card style={styles.confirmCard}>
+              <Text style={styles.confirmLabel}>Recipient</Text>
               <Text style={styles.confirmValue}>{recipientDisplay}</Text>
               <Text style={styles.confirmAddress}>{to}</Text>
-            </View>
+            </Card>
             
-            <View style={styles.confirmCard}>
-              <Text style={styles.confirmLabel}>Network</Text>
-              <Text style={styles.confirmValue}>{networkName}</Text>
-            </View>
-            
-            <View style={styles.confirmCard}>
-              <Text style={styles.confirmLabel}>Estimated Fee</Text>
-              <Text style={styles.confirmValue}>~0.00025 SOL</Text>
-            </View>
+            <Card style={styles.confirmCard}>
+              <View style={styles.confirmRow}>
+                <View>
+                  <Text style={styles.confirmLabel}>Network</Text>
+                  <Text style={styles.confirmValue}>{networkName}</Text>
+                </View>
+                <View>
+                  <Text style={styles.confirmLabel}>Est. Fee</Text>
+                  <Text style={styles.confirmValue}>~0.00025 SOL</Text>
+                </View>
+              </View>
+            </Card>
             
             {error && (
               <View style={styles.errorBanner}>
@@ -519,7 +515,7 @@ export default function SettleScreen() {
             )}
             
             {status === 'signing' && (
-              <View style={styles.signingBox}>
+              <View style={styles.signingState}>
                 <ActivityIndicator color={COLORS.primary} size="large" />
                 <Text style={styles.signingText}>Approve in your wallet...</Text>
               </View>
@@ -532,14 +528,14 @@ export default function SettleScreen() {
               onPress={handleCancel} 
               variant="outline" 
               size="large"
-              style={styles.flexBtn}
+              style={styles.flexButton}
               disabled={status === 'signing'}
             />
             <Button 
               title={status === 'signing' ? 'Sending...' : 'Send Payment'} 
               onPress={handleSendTransaction} 
               size="large"
-              style={styles.flexBtn}
+              style={styles.flexButton}
               loading={status === 'signing'}
               disabled={status === 'signing'}
             />
@@ -557,17 +553,16 @@ export default function SettleScreen() {
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          <NetworkBadge style={styles.networkBadgeCenter} />
-          
+        <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
           {/* Recipient */}
-          <View style={styles.recipientCard}>
+          <Card style={styles.recipientCard}>
             <Text style={styles.recipientLabel}>Paying</Text>
             <Text style={styles.recipientName}>{recipientDisplay}</Text>
             <Text style={styles.recipientAddress}>
-              {to?.slice(0, 8)}...{to?.slice(-8)}
+              {to?.slice(0, 8)}···{to?.slice(-8)}
             </Text>
-          </View>
+            <NetworkBadge style={styles.recipientBadge} />
+          </Card>
           
           {/* Currency Toggle */}
           <View style={styles.currencyToggle}>
@@ -612,7 +607,7 @@ export default function SettleScreen() {
           {solBalance !== null && solBalance < MIN_SOL_FOR_FEES && (
             <View style={styles.warningBanner}>
               <Text style={styles.warningBannerText}>
-                ⚠️ Low SOL! Need ~{MIN_SOL_FOR_FEES} SOL for fees.
+                ⚠️ Low SOL balance! You need about {MIN_SOL_FOR_FEES} SOL for fees.
               </Text>
               {faucetUrl && (
                 <TouchableOpacity onPress={handleOpenFaucet}>
@@ -623,27 +618,28 @@ export default function SettleScreen() {
           )}
           
           {/* Amount Input */}
-          <Text style={styles.label}>Amount</Text>
-          <View style={styles.amountContainer}>
-            {currency === 'USDC' && <Text style={styles.currencySymbol}>$</Text>}
-            <TextInput
-              style={styles.amountInput}
-              value={amount}
-              onChangeText={handleAmountChange}
-              placeholder="0.00"
-              placeholderTextColor={COLORS.textSecondary}
-              keyboardType="decimal-pad"
-            />
-            <Text style={styles.currencyLabel}>{currency}</Text>
+          <View style={styles.amountSection}>
+            <View style={styles.amountInputRow}>
+              {currency === 'USDC' && <Text style={styles.amountSymbol}>$</Text>}
+              <TextInput
+                style={styles.amountInput}
+                value={amount}
+                onChangeText={handleAmountChange}
+                placeholder="0.00"
+                placeholderTextColor={COLORS.textMuted}
+                keyboardType="decimal-pad"
+              />
+              <Text style={styles.amountCurrency}>{currency}</Text>
+            </View>
           </View>
           
-          {/* Quick amounts */}
+          {/* Quick Amounts */}
           {currency === 'USDC' && (
             <View style={styles.quickAmounts}>
               {['5', '10', '25', '50'].map((qa) => (
                 <TouchableOpacity
                   key={qa}
-                  style={styles.quickAmountBtn}
+                  style={styles.quickAmountButton}
                   onPress={() => setAmount(qa)}
                 >
                   <Text style={styles.quickAmountText}>${qa}</Text>
@@ -652,13 +648,13 @@ export default function SettleScreen() {
             </View>
           )}
           
-          {/* Max button for SOL */}
+          {/* Max Button for SOL */}
           {currency === 'SOL' && solBalance !== null && solBalance > MIN_SOL_FOR_FEES && (
             <TouchableOpacity 
-              style={styles.maxBtn}
+              style={styles.maxButton}
               onPress={() => setAmount(Math.max(0, solBalance - MIN_SOL_FOR_FEES).toFixed(4))}
             >
-              <Text style={styles.maxBtnText}>
+              <Text style={styles.maxButtonText}>
                 Use Max ({(solBalance - MIN_SOL_FOR_FEES).toFixed(4)} SOL)
               </Text>
             </TouchableOpacity>
@@ -669,12 +665,13 @@ export default function SettleScreen() {
           )}
         </ScrollView>
         
-        <View style={styles.footerSingle}>
+        <View style={styles.footer}>
           <Button
             title="Continue"
             onPress={handleProceedToConfirm}
             disabled={parsedAmount <= 0 || (solBalance !== null && solBalance < MIN_SOL_FOR_FEES)}
             size="large"
+            fullWidth
           />
         </View>
       </KeyboardAvoidingView>
@@ -683,104 +680,392 @@ export default function SettleScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
-  content: { flex: 1, padding: 20 },
-  centerContent: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
+  container: { 
+    flex: 1, 
+    backgroundColor: COLORS.background,
+  },
+  scrollContent: { 
+    flex: 1, 
+    padding: SPACING.xl,
+  },
+  centerContent: { 
+    flex: 1, 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    padding: SPACING.xl,
+  },
   
-  // Network badge
-  networkBadge: { marginTop: 16 },
-  networkBadgeCenter: { alignSelf: 'center', marginBottom: 20 },
+  // Recipient Card
+  recipientCard: { 
+    alignItems: 'center', 
+    marginBottom: SPACING['2xl'],
+    paddingVertical: SPACING['2xl'],
+  },
+  recipientLabel: { 
+    ...TYPOGRAPHY.small,
+    color: COLORS.textSecondary, 
+    marginBottom: SPACING.sm,
+  },
+  recipientName: { 
+    ...TYPOGRAPHY.h2,
+    color: COLORS.text, 
+    marginBottom: SPACING.xs,
+  },
+  recipientAddress: { 
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textMuted, 
+    fontFamily: 'monospace',
+    marginBottom: SPACING.md,
+  },
+  recipientBadge: {
+    marginTop: SPACING.sm,
+  },
   
-  // Recipient
-  recipientCard: { backgroundColor: COLORS.surface, borderRadius: 16, padding: 20, alignItems: 'center', marginBottom: 20 },
-  recipientLabel: { fontSize: 14, color: COLORS.textSecondary, marginBottom: 8 },
-  recipientName: { fontSize: 24, fontWeight: '600', color: COLORS.text, marginBottom: 4 },
-  recipientAddress: { fontSize: 12, color: COLORS.textSecondary, fontFamily: 'monospace' },
-  
-  // Currency toggle
-  currencyToggle: { flexDirection: 'row', backgroundColor: COLORS.surface, borderRadius: 12, padding: 4, marginBottom: 16 },
-  currencyOption: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 8 },
-  currencyOptionActive: { backgroundColor: COLORS.primary },
-  currencyText: { fontSize: 16, color: COLORS.textSecondary, fontWeight: '600' },
-  currencyTextActive: { color: COLORS.text },
+  // Currency Toggle
+  currencyToggle: { 
+    flexDirection: 'row', 
+    backgroundColor: COLORS.surface, 
+    borderRadius: RADIUS.md, 
+    padding: SPACING.xs, 
+    marginBottom: SPACING.lg,
+  },
+  currencyOption: { 
+    flex: 1, 
+    paddingVertical: SPACING.md, 
+    alignItems: 'center', 
+    borderRadius: RADIUS.sm,
+  },
+  currencyOptionActive: { 
+    backgroundColor: COLORS.primary,
+  },
+  currencyText: { 
+    ...TYPOGRAPHY.bodyMedium,
+    color: COLORS.textSecondary,
+  },
+  currencyTextActive: { 
+    color: COLORS.text,
+  },
   
   // Balance
-  balanceRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 16, gap: 12 },
-  balanceText: { fontSize: 14, color: COLORS.textSecondary },
-  refreshText: { fontSize: 14, color: COLORS.primary, fontWeight: '600' },
+  balanceRow: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    marginBottom: SPACING.lg, 
+    gap: SPACING.md,
+  },
+  balanceText: { 
+    ...TYPOGRAPHY.small,
+    color: COLORS.textSecondary,
+  },
+  refreshText: { 
+    ...TYPOGRAPHY.smallMedium,
+    color: COLORS.primary,
+  },
   
   // Warnings
-  warningBanner: { backgroundColor: COLORS.warning + '20', borderRadius: 12, padding: 12, marginBottom: 16 },
-  warningBannerText: { fontSize: 14, color: COLORS.warning },
-  warningLink: { fontSize: 14, color: COLORS.primary, fontWeight: '600', marginTop: 8 },
-  warningText: { fontSize: 14, color: COLORS.warning, textAlign: 'center', marginTop: 12 },
+  warningBanner: { 
+    backgroundColor: COLORS.warningMuted, 
+    borderRadius: RADIUS.md, 
+    padding: SPACING.lg, 
+    marginBottom: SPACING.lg,
+  },
+  warningBannerText: { 
+    ...TYPOGRAPHY.small,
+    color: COLORS.warning,
+  },
+  warningLink: { 
+    ...TYPOGRAPHY.smallMedium,
+    color: COLORS.primary, 
+    marginTop: SPACING.sm,
+  },
+  warningText: { 
+    ...TYPOGRAPHY.small,
+    color: COLORS.warning, 
+    textAlign: 'center', 
+    marginTop: SPACING.md,
+  },
   
-  // Amount input
-  label: { fontSize: 16, fontWeight: '600', color: COLORS.text, marginBottom: 8 },
-  amountContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surface, borderRadius: 12, paddingHorizontal: 16 },
-  currencySymbol: { fontSize: 32, color: COLORS.textSecondary, marginRight: 8 },
-  amountInput: { flex: 1, fontSize: 32, color: COLORS.text, paddingVertical: 16 },
-  currencyLabel: { fontSize: 18, color: COLORS.textSecondary, marginLeft: 8 },
+  // Amount Input
+  amountSection: {
+    marginBottom: SPACING.lg,
+  },
+  amountInputRow: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: COLORS.surface, 
+    borderRadius: RADIUS.md, 
+    paddingHorizontal: SPACING.lg,
+  },
+  amountSymbol: { 
+    fontSize: 32, 
+    color: COLORS.textMuted, 
+    marginRight: SPACING.sm,
+    fontWeight: '300',
+  },
+  amountInput: { 
+    flex: 1, 
+    fontSize: 32, 
+    color: COLORS.text, 
+    paddingVertical: SPACING.lg,
+    fontWeight: '500',
+  },
+  amountCurrency: { 
+    ...TYPOGRAPHY.body,
+    color: COLORS.textMuted, 
+    marginLeft: SPACING.sm,
+  },
   
-  // Quick amounts
-  quickAmounts: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16, gap: 8 },
-  quickAmountBtn: { flex: 1, backgroundColor: COLORS.surfaceLight, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
-  quickAmountText: { fontSize: 14, color: COLORS.text, fontWeight: '600' },
+  // Quick Amounts
+  quickAmounts: { 
+    flexDirection: 'row', 
+    gap: SPACING.sm,
+    marginBottom: SPACING.lg,
+  },
+  quickAmountButton: { 
+    flex: 1, 
+    backgroundColor: COLORS.surface, 
+    borderRadius: RADIUS.sm, 
+    paddingVertical: SPACING.md, 
+    alignItems: 'center',
+  },
+  quickAmountText: { 
+    ...TYPOGRAPHY.smallMedium,
+    color: COLORS.text,
+  },
   
-  // Max button
-  maxBtn: { marginTop: 16, alignItems: 'center' },
-  maxBtnText: { fontSize: 14, color: COLORS.primary, fontWeight: '600' },
+  // Max Button
+  maxButton: { 
+    alignItems: 'center',
+    marginBottom: SPACING.lg,
+  },
+  maxButtonText: { 
+    ...TYPOGRAPHY.smallMedium,
+    color: COLORS.primary,
+  },
   
-  // Form error
-  formError: { color: COLORS.error, fontSize: 14, marginTop: 16, textAlign: 'center' },
+  // Form Error
+  formError: { 
+    ...TYPOGRAPHY.small,
+    color: COLORS.error, 
+    textAlign: 'center',
+  },
   
   // Footer
-  footerSingle: { padding: 20, paddingBottom: 40 },
-  footerRow: { padding: 20, paddingBottom: 40, flexDirection: 'row', gap: 12 },
-  flexBtn: { flex: 1 },
+  footer: { 
+    padding: SPACING.xl, 
+    paddingBottom: SPACING['4xl'],
+  },
+  footerRow: { 
+    padding: SPACING.xl, 
+    paddingBottom: SPACING['4xl'], 
+    flexDirection: 'row', 
+    gap: SPACING.md,
+  },
+  flexButton: { 
+    flex: 1,
+  },
   
-  // Confirm screen
-  confirmTitle: { fontSize: 24, fontWeight: '600', color: COLORS.text, textAlign: 'center', marginBottom: 24 },
-  confirmCard: { backgroundColor: COLORS.surface, borderRadius: 12, padding: 16, marginBottom: 12 },
-  confirmLabel: { fontSize: 14, color: COLORS.textSecondary, marginBottom: 4 },
-  confirmValue: { fontSize: 18, fontWeight: '600', color: COLORS.text },
-  confirmAddress: { fontSize: 12, color: COLORS.textSecondary, fontFamily: 'monospace', marginTop: 4 },
+  // Confirm Screen
+  confirmHeader: {
+    alignItems: 'center',
+    marginBottom: SPACING['2xl'],
+  },
+  confirmTitle: { 
+    ...TYPOGRAPHY.h2,
+    color: COLORS.text, 
+    marginBottom: SPACING.xs,
+  },
+  confirmSubtitle: {
+    ...TYPOGRAPHY.body,
+    color: COLORS.textSecondary,
+  },
+  confirmCard: { 
+    marginBottom: SPACING.md,
+  },
+  confirmLabel: { 
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textSecondary, 
+    marginBottom: SPACING.xs,
+  },
+  confirmValue: { 
+    ...TYPOGRAPHY.bodyMedium,
+    color: COLORS.text,
+  },
+  confirmAmount: {
+    ...TYPOGRAPHY.h1,
+    color: COLORS.text,
+  },
+  confirmAddress: { 
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textMuted, 
+    fontFamily: 'monospace', 
+    marginTop: SPACING.xs,
+  },
+  confirmRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
   
-  // Error banner
-  errorBanner: { backgroundColor: COLORS.error + '20', borderRadius: 12, padding: 12, marginTop: 12 },
-  errorBannerText: { fontSize: 14, color: COLORS.error, textAlign: 'center' },
+  // Error Banner
+  errorBanner: { 
+    backgroundColor: COLORS.errorMuted, 
+    borderRadius: RADIUS.md, 
+    padding: SPACING.lg, 
+    marginTop: SPACING.md,
+  },
+  errorBannerText: { 
+    ...TYPOGRAPHY.small,
+    color: COLORS.error, 
+    textAlign: 'center',
+  },
   
   // Signing
-  signingBox: { alignItems: 'center', marginTop: 32 },
-  signingText: { fontSize: 16, color: COLORS.textSecondary, marginTop: 16 },
+  signingState: { 
+    alignItems: 'center', 
+    marginTop: SPACING['3xl'],
+  },
+  signingText: { 
+    ...TYPOGRAPHY.body,
+    color: COLORS.textSecondary, 
+    marginTop: SPACING.lg,
+  },
+  checkingText: {
+    ...TYPOGRAPHY.body,
+    color: COLORS.textSecondary,
+    marginTop: SPACING.lg,
+  },
   
-  // Success
-  successEmoji: { fontSize: 64, marginBottom: 16 },
-  successTitle: { fontSize: 28, fontWeight: '600', color: COLORS.text, marginBottom: 16 },
-  successAmount: { fontSize: 36, fontWeight: '700', color: COLORS.success, marginBottom: 8 },
-  successRecipient: { fontSize: 18, color: COLORS.textSecondary, marginBottom: 24 },
+  // Success Screen
+  successIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: COLORS.successMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: SPACING.xl,
+  },
+  successIconText: {
+    fontSize: 36,
+    color: COLORS.success,
+    fontWeight: '600',
+  },
+  successTitle: { 
+    ...TYPOGRAPHY.h1,
+    color: COLORS.text, 
+    marginBottom: SPACING.md,
+  },
+  successAmount: { 
+    fontSize: 36, 
+    fontWeight: '700', 
+    color: COLORS.success, 
+    marginBottom: SPACING.sm,
+  },
+  successRecipient: { 
+    ...TYPOGRAPHY.body,
+    color: COLORS.textSecondary, 
+    marginBottom: SPACING['2xl'],
+  },
   
-  // Pending
-  pendingTitle: { fontSize: 24, fontWeight: '600', color: COLORS.warning, marginTop: 16, marginBottom: 8 },
-  pendingText: { fontSize: 16, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 24 },
+  // Pending Screen
+  spinner: {
+    marginBottom: SPACING.xl,
+  },
+  pendingTitle: { 
+    ...TYPOGRAPHY.h2,
+    color: COLORS.warning, 
+    marginBottom: SPACING.sm,
+  },
+  pendingMessage: { 
+    ...TYPOGRAPHY.body,
+    color: COLORS.textSecondary, 
+    textAlign: 'center', 
+    marginBottom: SPACING['2xl'],
+    maxWidth: 280,
+  },
   
-  // Error screen
-  errorEmoji: { fontSize: 64, marginBottom: 16 },
-  errorTitle: { fontSize: 24, fontWeight: '600', color: COLORS.error, marginBottom: 12 },
-  errorMessage: { fontSize: 16, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 24 },
-  errorText: { color: COLORS.error, fontSize: 16, textAlign: 'center', marginTop: 40 },
+  // Error Screen
+  errorIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: COLORS.errorMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: SPACING.xl,
+  },
+  errorIconText: {
+    fontSize: 36,
+    color: COLORS.error,
+    fontWeight: '600',
+  },
+  errorTitle: { 
+    ...TYPOGRAPHY.h2,
+    color: COLORS.error, 
+    marginBottom: SPACING.md,
+  },
+  errorMessage: { 
+    ...TYPOGRAPHY.body,
+    color: COLORS.textSecondary, 
+    textAlign: 'center', 
+    marginBottom: SPACING['2xl'],
+    maxWidth: 280,
+  },
+  errorEmoji: { 
+    fontSize: 48, 
+    marginBottom: SPACING.lg,
+  },
   
-  // Signature box
-  signatureBox: { backgroundColor: COLORS.surface, borderRadius: 12, padding: 16, marginBottom: 16, width: '100%' },
-  signatureLabel: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 4 },
-  signatureText: { fontSize: 14, color: COLORS.text, fontFamily: 'monospace' },
+  // Transaction Card
+  txCard: { 
+    width: '100%', 
+    marginBottom: SPACING.lg,
+    backgroundColor: COLORS.surface,
+  },
+  txLabel: { 
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textSecondary, 
+    marginBottom: SPACING.xs,
+  },
+  txSignature: { 
+    ...TYPOGRAPHY.small,
+    color: COLORS.text, 
+    fontFamily: 'monospace',
+  },
   
-  // Action buttons
-  actionButtons: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-  actionBtn: { backgroundColor: COLORS.surface, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
-  actionBtnText: { fontSize: 14, color: COLORS.primary, fontWeight: '600' },
+  // Action Buttons
+  actionRow: { 
+    flexDirection: 'row', 
+    gap: SPACING.md, 
+    marginBottom: SPACING.lg,
+  },
+  actionButton: { 
+    backgroundColor: COLORS.surface, 
+    paddingVertical: SPACING.md, 
+    paddingHorizontal: SPACING.xl, 
+    borderRadius: RADIUS.sm,
+  },
+  actionButtonText: { 
+    ...TYPOGRAPHY.smallMedium,
+    color: COLORS.primary,
+  },
   
-  // Help button
-  helpBtn: { backgroundColor: COLORS.surface, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8, marginBottom: 16 },
-  helpBtnText: { fontSize: 16, color: COLORS.primary, fontWeight: '600' },
+  // Help Link
+  helpLink: { 
+    backgroundColor: COLORS.surface, 
+    paddingVertical: SPACING.md, 
+    paddingHorizontal: SPACING['2xl'], 
+    borderRadius: RADIUS.sm, 
+    marginBottom: SPACING.lg,
+  },
+  helpLinkText: { 
+    ...TYPOGRAPHY.bodyMedium,
+    color: COLORS.primary,
+  },
+  
+  // Badge
+  badge: { 
+    marginTop: SPACING.lg,
+  },
 });

@@ -10,8 +10,8 @@ import {
 import { useRouter } from 'expo-router';
 import { useGroupStore } from '../../stores/groupStore';
 import { useWalletPublicKey } from '../../stores/walletStore';
-import { Button } from '../../components/Button';
-import { COLORS } from '../../lib/constants';
+import { Button } from '../../components';
+import { COLORS, SPACING, TYPOGRAPHY, RADIUS } from '../../lib/constants';
 
 export default function CreateGroupScreen() {
   const router = useRouter();
@@ -24,7 +24,7 @@ export default function CreateGroupScreen() {
   
   const handleCreate = async () => {
     if (!name.trim()) {
-      setError('Please enter a group name');
+      setError('Please enter a name for your group');
       return;
     }
     
@@ -37,15 +37,11 @@ export default function CreateGroupScreen() {
     setError('');
     
     try {
-      console.log("DEBUG create.tsx name=", name.trim());
-      console.log("DEBUG create.tsx publicKey=", publicKey, "type=", typeof publicKey, "len=", String(publicKey).length);
-
       const group = await createGroup(name.trim(), publicKey);
       router.replace(`/group/${group.id}`);
     } catch (err: any) {
-      console.log("CREATE GROUP UI ERROR:", err);
-      console.log("CREATE GROUP UI ERROR JSON:", JSON.stringify(err, null, 2));
-      setError(err?.message || "Failed to create group");
+      console.error('Create group error:', err);
+      setError(err?.message || 'Something went wrong. Please try again.');
       setIsLoading(false);
     }
   };
@@ -56,25 +52,39 @@ export default function CreateGroupScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={styles.content}>
-        <Text style={styles.label}>Group Name</Text>
-        <TextInput
-          style={styles.input}
-          value={name}
-          onChangeText={(text) => {
-            setName(text);
-            setError('');
-          }}
-          placeholder="e.g., Trip to Bali, Roommates"
-          placeholderTextColor={COLORS.textSecondary}
-          autoFocus
-          maxLength={50}
-        />
+        <View style={styles.header}>
+          <Text style={styles.emoji}>🎉</Text>
+          <Text style={styles.title}>Create a Group</Text>
+          <Text style={styles.subtitle}>
+            Start splitting expenses with friends, roommates, or travel buddies.
+          </Text>
+        </View>
         
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        
-        <Text style={styles.hint}>
-          You'll be able to add members after creating the group.
-        </Text>
+        <View style={styles.inputSection}>
+          <Text style={styles.label}>Group Name</Text>
+          <TextInput
+            style={styles.input}
+            value={name}
+            onChangeText={(text) => {
+              setName(text);
+              setError('');
+            }}
+            placeholder="e.g., Trip to Bali, Roommates"
+            placeholderTextColor={COLORS.textMuted}
+            autoFocus
+            maxLength={50}
+          />
+          
+          {error ? (
+            <View style={styles.errorContainer}>
+              <Text style={styles.error}>{error}</Text>
+            </View>
+          ) : (
+            <Text style={styles.hint}>
+              You'll be added as the first member automatically.
+            </Text>
+          )}
+        </View>
       </View>
       
       <View style={styles.footer}>
@@ -84,7 +94,7 @@ export default function CreateGroupScreen() {
           loading={isLoading}
           disabled={!name.trim()}
           size="large"
-          style={styles.createButton}
+          fullWidth
         />
       </View>
     </KeyboardAvoidingView>
@@ -98,37 +108,60 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    padding: 20,
+    padding: SPACING.xl,
+  },
+  header: {
+    alignItems: 'center',
+    marginBottom: SPACING['3xl'],
+    marginTop: SPACING.xl,
+  },
+  emoji: {
+    fontSize: 56,
+    marginBottom: SPACING.lg,
+  },
+  title: {
+    ...TYPOGRAPHY.h1,
+    color: COLORS.text,
+    marginBottom: SPACING.sm,
+  },
+  subtitle: {
+    ...TYPOGRAPHY.body,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    maxWidth: 280,
+  },
+  inputSection: {
+    marginTop: SPACING.lg,
   },
   label: {
-    fontSize: 16,
-    fontWeight: '600',
+    ...TYPOGRAPHY.smallMedium,
     color: COLORS.text,
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
   input: {
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 18,
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
+    ...TYPOGRAPHY.h3,
     color: COLORS.text,
-    marginBottom: 12,
+  },
+  errorContainer: {
+    backgroundColor: COLORS.errorMuted,
+    borderRadius: RADIUS.sm,
+    padding: SPACING.md,
+    marginTop: SPACING.md,
   },
   error: {
+    ...TYPOGRAPHY.small,
     color: COLORS.error,
-    fontSize: 14,
-    marginBottom: 12,
   },
   hint: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
+    ...TYPOGRAPHY.small,
+    color: COLORS.textMuted,
+    marginTop: SPACING.md,
   },
   footer: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  createButton: {
-    width: '100%',
+    padding: SPACING.xl,
+    paddingBottom: SPACING['4xl'],
   },
 });

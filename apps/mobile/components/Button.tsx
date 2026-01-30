@@ -6,18 +6,21 @@ import {
   ActivityIndicator,
   ViewStyle,
   TextStyle,
+  View,
 } from 'react-native';
-import { COLORS } from '../lib/constants';
+import { COLORS, SPACING, RADIUS, TYPOGRAPHY } from '../lib/constants';
 
 interface ButtonProps {
   title: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary' | 'outline';
+  variant?: 'primary' | 'secondary' | 'outline' | 'ghost';
   size?: 'small' | 'medium' | 'large';
   disabled?: boolean;
   loading?: boolean;
   style?: ViewStyle;
   textStyle?: TextStyle;
+  icon?: string;
+  fullWidth?: boolean;
 }
 
 export const Button: React.FC<ButtonProps> = ({
@@ -29,12 +32,15 @@ export const Button: React.FC<ButtonProps> = ({
   loading = false,
   style,
   textStyle,
+  icon,
+  fullWidth = false,
 }) => {
   const buttonStyles = [
     styles.button,
     styles[variant],
     styles[size],
     disabled && styles.disabled,
+    fullWidth && styles.fullWidth,
     style,
   ];
   
@@ -42,7 +48,6 @@ export const Button: React.FC<ButtonProps> = ({
     styles.text,
     styles[`${variant}Text`],
     styles[`${size}Text`],
-    disabled && styles.disabledText,
     textStyle,
   ];
   
@@ -51,15 +56,18 @@ export const Button: React.FC<ButtonProps> = ({
       style={buttonStyles}
       onPress={onPress}
       disabled={disabled || loading}
-      activeOpacity={0.7}
+      activeOpacity={0.8}
     >
       {loading ? (
         <ActivityIndicator 
-          color={variant === 'outline' ? COLORS.primary : COLORS.text} 
+          color={variant === 'outline' || variant === 'ghost' ? COLORS.primary : COLORS.text} 
           size="small"
         />
       ) : (
-        <Text style={textStyles}>{title}</Text>
+        <View style={styles.content}>
+          {icon && <Text style={[styles.icon, textStyles]}>{icon}</Text>}
+          <Text style={textStyles}>{title}</Text>
+        </View>
       )}
     </TouchableOpacity>
   );
@@ -67,9 +75,21 @@ export const Button: React.FC<ButtonProps> = ({
 
 const styles = StyleSheet.create({
   button: {
-    borderRadius: 12,
+    borderRadius: RADIUS.md,
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'row',
+  },
+  content: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  icon: {
+    marginRight: SPACING.sm,
+  },
+  fullWidth: {
+    width: '100%',
   },
   
   // Variants
@@ -81,27 +101,33 @@ const styles = StyleSheet.create({
   },
   outline: {
     backgroundColor: 'transparent',
-    borderWidth: 2,
-    borderColor: COLORS.primary,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+  },
+  ghost: {
+    backgroundColor: 'transparent',
   },
   
   // Sizes
   small: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    minHeight: 36,
   },
   medium: {
-    paddingVertical: 14,
-    paddingHorizontal: 24,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.xl,
+    minHeight: 48,
   },
   large: {
-    paddingVertical: 18,
-    paddingHorizontal: 32,
+    paddingVertical: SPACING.lg,
+    paddingHorizontal: SPACING['2xl'],
+    minHeight: 56,
   },
   
   // Disabled
   disabled: {
-    opacity: 0.5,
+    opacity: 0.4,
   },
   
   // Text
@@ -115,18 +141,21 @@ const styles = StyleSheet.create({
     color: COLORS.background,
   },
   outlineText: {
+    color: COLORS.text,
+  },
+  ghostText: {
     color: COLORS.primary,
   },
   smallText: {
-    fontSize: 14,
+    ...TYPOGRAPHY.small,
+    fontWeight: '600',
   },
   mediumText: {
-    fontSize: 16,
+    ...TYPOGRAPHY.body,
+    fontWeight: '600',
   },
   largeText: {
-    fontSize: 18,
-  },
-  disabledText: {
-    opacity: 0.7,
+    ...TYPOGRAPHY.h3,
+    fontWeight: '600',
   },
 });

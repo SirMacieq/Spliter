@@ -55,15 +55,55 @@ export const TX_CONFIRMATION_TIMEOUT = 30000;
 // Colors
 export const COLORS = {
   primary: '#9945FF', // Solana purple
+  primaryMuted: '#9945FF40',
   secondary: '#14F195', // Solana green
   background: '#0D0D0D',
   surface: '#1A1A2E',
   surfaceLight: '#252542',
+  border: '#2A2A4A',
   text: '#FFFFFF',
   textSecondary: '#A0A0A0',
-  error: '#FF4444',
+  textMuted: '#6B6B8A',
+  error: '#FF6B6B',
+  errorMuted: '#FF6B6B20',
   success: '#14F195',
+  successMuted: '#14F19520',
   warning: '#FFB800',
+  warningMuted: '#FFB80020',
+} as const;
+
+// Spacing scale (4px base)
+export const SPACING = {
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 20,
+  '2xl': 24,
+  '3xl': 32,
+  '4xl': 40,
+} as const;
+
+// Typography
+export const TYPOGRAPHY = {
+  h1: { fontSize: 28, fontWeight: '700' as const, lineHeight: 34 },
+  h2: { fontSize: 22, fontWeight: '600' as const, lineHeight: 28 },
+  h3: { fontSize: 18, fontWeight: '600' as const, lineHeight: 24 },
+  body: { fontSize: 16, fontWeight: '400' as const, lineHeight: 22 },
+  bodyMedium: { fontSize: 16, fontWeight: '500' as const, lineHeight: 22 },
+  small: { fontSize: 14, fontWeight: '400' as const, lineHeight: 20 },
+  smallMedium: { fontSize: 14, fontWeight: '500' as const, lineHeight: 20 },
+  caption: { fontSize: 12, fontWeight: '400' as const, lineHeight: 16 },
+  captionMedium: { fontSize: 12, fontWeight: '500' as const, lineHeight: 16 },
+} as const;
+
+// Border radius
+export const RADIUS = {
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 20,
+  full: 9999,
 } as const;
 
 // Storage Keys

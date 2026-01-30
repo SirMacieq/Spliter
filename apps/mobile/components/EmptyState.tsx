@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, ViewStyle } from 'react-native';
-import { COLORS } from '../lib/constants';
+import { COLORS, SPACING, TYPOGRAPHY } from '../lib/constants';
 import { Button } from './Button';
 
 interface EmptyStateProps {
@@ -10,6 +10,7 @@ interface EmptyStateProps {
   actionLabel?: string;
   onAction?: () => void;
   style?: ViewStyle;
+  compact?: boolean;
 }
 
 export const EmptyState: React.FC<EmptyStateProps> = ({
@@ -19,17 +20,19 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   actionLabel,
   onAction,
   style,
+  compact = false,
 }) => {
   return (
-    <View style={[styles.container, style]}>
-      <Text style={styles.emoji}>{emoji}</Text>
-      <Text style={styles.title}>{title}</Text>
+    <View style={[styles.container, compact && styles.compact, style]}>
+      <Text style={[styles.emoji, compact && styles.emojiCompact]}>{emoji}</Text>
+      <Text style={[styles.title, compact && styles.titleCompact]}>{title}</Text>
       {message && <Text style={styles.message}>{message}</Text>}
       {actionLabel && onAction && (
         <Button
           title={actionLabel}
           onPress={onAction}
           style={styles.button}
+          size={compact ? 'medium' : 'large'}
         />
       )}
     </View>
@@ -41,27 +44,37 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 40,
+    padding: SPACING['4xl'],
+  },
+  compact: {
+    flex: 0,
+    paddingVertical: SPACING['3xl'],
   },
   emoji: {
-    fontSize: 64,
-    marginBottom: 16,
+    fontSize: 56,
+    marginBottom: SPACING.lg,
+  },
+  emojiCompact: {
+    fontSize: 40,
+    marginBottom: SPACING.md,
   },
   title: {
-    fontSize: 20,
-    fontWeight: '600',
+    ...TYPOGRAPHY.h2,
     color: COLORS.text,
     textAlign: 'center',
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
+  },
+  titleCompact: {
+    ...TYPOGRAPHY.h3,
   },
   message: {
-    fontSize: 16,
+    ...TYPOGRAPHY.body,
     color: COLORS.textSecondary,
     textAlign: 'center',
-    lineHeight: 24,
-    marginBottom: 24,
+    marginBottom: SPACING['2xl'],
+    maxWidth: 280,
   },
   button: {
-    paddingHorizontal: 32,
+    minWidth: 160,
   },
 });

@@ -1,13 +1,17 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { COLORS } from '../lib/constants';
+import { View, Text, StyleSheet, ViewStyle } from 'react-native';
+import { COLORS, SPACING, TYPOGRAPHY, RADIUS } from '../lib/constants';
 import { useNetwork } from '../stores/settingsStore';
 
 interface NetworkBadgeProps {
-  style?: object;
+  style?: ViewStyle;
+  showLabel?: boolean;
 }
 
-export const NetworkBadge: React.FC<NetworkBadgeProps> = ({ style }) => {
+export const NetworkBadge: React.FC<NetworkBadgeProps> = ({ 
+  style,
+  showLabel = true,
+}) => {
   const network = useNetwork();
   const isDevnet = network === 'devnet';
   
@@ -21,9 +25,14 @@ export const NetworkBadge: React.FC<NetworkBadgeProps> = ({ style }) => {
         styles.dot,
         isDevnet ? styles.dotDevnet : styles.dotMainnet,
       ]} />
-      <Text style={styles.text}>
-        {isDevnet ? 'Devnet' : 'Mainnet'}
-      </Text>
+      {showLabel && (
+        <Text style={[
+          styles.text,
+          isDevnet ? styles.textDevnet : styles.textMainnet,
+        ]}>
+          {isDevnet ? 'Devnet' : 'Mainnet'}
+        </Text>
+      )}
     </View>
   );
 };
@@ -32,21 +41,20 @@ const styles = StyleSheet.create({
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs + 2,
+    borderRadius: RADIUS.full,
   },
   badgeDevnet: {
-    backgroundColor: COLORS.warning + '25',
+    backgroundColor: COLORS.warningMuted,
   },
   badgeMainnet: {
-    backgroundColor: COLORS.success + '25',
+    backgroundColor: COLORS.successMuted,
   },
   dot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    marginRight: 6,
   },
   dotDevnet: {
     backgroundColor: COLORS.warning,
@@ -55,8 +63,13 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.success,
   },
   text: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.text,
+    marginLeft: SPACING.sm,
+    ...TYPOGRAPHY.captionMedium,
+  },
+  textDevnet: {
+    color: COLORS.warning,
+  },
+  textMainnet: {
+    color: COLORS.success,
   },
 });

@@ -13,7 +13,7 @@ import { useWalletStore, useIsConnected, useIsBooting } from '../stores/walletSt
 import { useGroupStore } from '../stores/groupStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { SplashScreen } from '../components/SplashScreen';
-import { COLORS } from '../lib/constants';
+import { COLORS, SPACING, TYPOGRAPHY } from '../lib/constants';
 
 // Hydration hook - loads all stores before rendering
 function useHydration() {
