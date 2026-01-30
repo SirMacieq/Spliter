@@ -39,6 +39,59 @@ export const getConnection = (): Connection => {
   return new Connection(getSolanaRpcUrl(), 'confirmed');
 };
 
+// ===== RPC fallback (fix for 403 Access forbidden) =====
+const FALLBACK_RPC_BY_NETWORK: Record<string, string[]> = {
+  'mainnet-beta': [
+    'https://api.mainnet-beta.solana.com',
+    'https://solana-mainnet.rpc.extrnode.com',
+    'https://rpc.ankr.com/solana',
+    'https://solana.public-rpc.com',
+    'https://api.metaplex.solana.com',
+  ],
+  devnet: [
+    'https://api.devnet.solana.com',
+    'https://rpc.ankr.com/solana_devnet',
+  ],
+};
+
+function getRpcCandidates(): string[] {
+  const network = getSolanaNetwork();
+  const primary = getSolanaRpcUrl();
+  const fallbacks = FALLBACK_RPC_BY_NETWORK[network] ?? [];
+  return Array.from(new Set([primary, ...fallbacks])).filter(Boolean);
+}
+
+async function withRpcFallback<T>(
+  fn: (connection: Connection, rpcUrl: string) => Promise<T>
+): Promise<T> {
+  const candidates = getRpcCandidates();
+  let lastErr: any;
+
+  for (const rpcUrl of candidates) {
+    try {
+      const connection = new Connection(rpcUrl, 'confirmed');
+      return await fn(connection, rpcUrl);
+    } catch (e: any) {
+      lastErr = e;
+      const msg = String(e?.message ?? e);
+
+      // jeśli 403/forbidden -> próbuj następny RPC
+      if (
+        msg.includes('403') ||
+        msg.toLowerCase().includes('forbidden') ||
+        msg.toLowerCase().includes('access forbidden')
+      ) {
+        continue;
+      }
+
+      // inne błędy (np. brak neta) - nie maskuj
+      throw e;
+    }
+  }
+
+  throw lastErr;
+}
+
 // Convert USDC amount to lamports (6 decimals)
 export const usdcToLamports = (amount: number): bigint => {
   return BigInt(Math.round(amount * Math.pow(10, USDC_DECIMALS)));
@@ -51,23 +104,25 @@ export const solToLamports = (amount: number): number => {
 
 // Get SOL balance
 export const getSolBalance = async (publicKey: string): Promise<number> => {
-  const connection = getConnection();
-  const balance = await connection.getBalance(new PublicKey(publicKey));
-  return balance / LAMPORTS_PER_SOL;
+  return withRpcFallback(async (connection) => {
+    const balance = await connection.getBalance(new PublicKey(publicKey));
+    return balance / LAMPORTS_PER_SOL;
+  });
 };
 
 // Get USDC balance
 export const getUsdcBalance = async (publicKey: string): Promise<number> => {
   try {
-    const connection = getConnection();
-    const usdcMint = new PublicKey(getCurrentUsdcMint());
-    const owner = new PublicKey(publicKey);
-    
-    const ata = await getAssociatedTokenAddress(usdcMint, owner);
-    const account = await getAccount(connection, ata);
-    
-    return Number(account.amount) / Math.pow(10, USDC_DECIMALS);
-  } catch (error) {
+    return await withRpcFallback(async (connection) => {
+      const usdcMint = new PublicKey(getCurrentUsdcMint());
+      const owner = new PublicKey(publicKey);
+
+      const ata = await getAssociatedTokenAddress(usdcMint, owner);
+      const account = await getAccount(connection, ata);
+
+      return Number(account.amount) / Math.pow(10, USDC_DECIMALS);
+    });
+  } catch {
     return 0;
   }
 };
@@ -285,9 +340,11 @@ export const hasEnoughSolForFees = async (publicKey: string): Promise<boolean> =
 
 // Detect error type from MWA/Solana errors
 export const categorizeError = (error: any): { type: 'rejected' | 'network' | 'fee' | 'balance' | 'timeout' | 'general'; message: string } => {
-  const message = error?.message || String(error);
-  
-  if (message.includes('User rejected') || message.includes('cancelled') || message.includes('declined')) {
+  const raw = String(error?.message ?? error ?? '');
+  const full = `${error?.name ?? ''} ${raw}`;  
+  const message = full;
+
+  if (message.includes('CancellationException') || message.includes('User rejected') || message.toLowerCase().includes('reject') || message.includes('cancelled') || message.includes('declined')) {
     return { type: 'rejected', message: 'Transaction cancelled' };
   }
   
