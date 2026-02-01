@@ -1,8 +1,14 @@
 /**
  * Batch Payouts Screen
  * 
- * Part 1 of 2: Paste list + manual add
- * TODO (Part 2): CSV import, resume after restart, NFT batch
+ * Supports:
+ * - Token batch (SOL/USDC/Custom SPL) with 2.5% fee
+ * - NFT batch with flat SOL fee per transfer
+ * - CSV import (recipient,amount for tokens; recipient,mint for NFTs)
+ * - Paste input (same format)
+ * - Manual add
+ * - Batch persistence and resume after restart
+ * - Export report / Copy summary
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -13,12 +19,15 @@ import {
   ScrollView,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   FlatList,
+  Share,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, Stack } from 'expo-router';
-import { PublicKey } from '@solana/web3.js';
 import { useWalletPublicKey } from '../../stores/walletStore';
 import { useGroupStore } from '../../stores/groupStore';
 import { Button, Card, NetworkBadge, SectionHeader } from '../../components';
@@ -35,6 +44,8 @@ import {
   getCurrentUsdcMint,
   getFaucetUrl,
   getNetworkName,
+  NFT_FEE_SOL,
+  STORAGE_KEYS,
 } from '../../lib/constants';
 import {
   getSolBalance,
@@ -42,6 +53,8 @@ import {
   getTokenDecimals,
   sendSolTransferWithFee,
   sendSplTokenTransferWithFee,
+  sendNftTransferWithFee,
+  ownsNft,
   waitForConfirmation,
   checkTransactionStatus,
   getExplorerUrl,
@@ -53,14 +66,14 @@ import { isValidSolanaAddress, shortenAddress } from '../../lib/validation';
 // Types
 // ============================================
 
-type PayoutAsset = 'SOL' | 'USDC' | 'CUSTOM';
-
+type BatchMode = 'TOKEN' | 'NFT';
+type TokenAsset = 'SOL' | 'USDC' | 'CUSTOM';
 type RowStatus = 'pending' | 'queued' | 'sending' | 'sent' | 'confirmed' | 'failed';
+type BatchPhase = 'input' | 'preview' | 'executing' | 'done';
 
-interface PayoutRow {
+interface BaseRow {
   id: string;
   recipient: string;
-  amount: number;
   status: RowStatus;
   error?: string;
   signature?: string;
@@ -68,7 +81,59 @@ interface PayoutRow {
   validationError?: string;
 }
 
-type BatchPhase = 'input' | 'preview' | 'executing' | 'done';
+interface TokenRow extends BaseRow {
+  type: 'token';
+  amount: number;
+}
+
+interface NftRow extends BaseRow {
+  type: 'nft';
+  nftMint: string;
+}
+
+type PayoutRow = TokenRow | NftRow;
+
+interface BatchDraft {
+  mode: BatchMode;
+  tokenAsset?: TokenAsset;
+  customMint?: string;
+  rows: PayoutRow[];
+  phase: BatchPhase;
+  createdAt: number;
+  walletAddress: string;
+}
+
+// ============================================
+// Storage helpers
+// ============================================
+
+const saveBatchDraft = async (draft: BatchDraft): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.BATCH_DRAFT, JSON.stringify(draft));
+  } catch (err) {
+    console.error('Failed to save batch draft:', err);
+  }
+};
+
+const loadBatchDraft = async (): Promise<BatchDraft | null> => {
+  try {
+    const data = await AsyncStorage.getItem(STORAGE_KEYS.BATCH_DRAFT);
+    if (data) {
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error('Failed to load batch draft:', err);
+  }
+  return null;
+};
+
+const clearBatchDraft = async (): Promise<void> => {
+  try {
+    await AsyncStorage.removeItem(STORAGE_KEYS.BATCH_DRAFT);
+  } catch (err) {
+    console.error('Failed to clear batch draft:', err);
+  }
+};
 
 // ============================================
 // Component
@@ -80,8 +145,11 @@ export default function BatchPayoutScreen() {
   const addTxHistory = useGroupStore((state) => state.addTxHistory);
   const updateTxStatus = useGroupStore((state) => state.updateTxStatus);
 
-  // Asset selection
-  const [asset, setAsset] = useState<PayoutAsset>('USDC');
+  // Mode
+  const [mode, setMode] = useState<BatchMode>('TOKEN');
+  
+  // Token settings
+  const [tokenAsset, setTokenAsset] = useState<TokenAsset>('USDC');
   const [customMint, setCustomMint] = useState('');
   const [tokenDecimals, setTokenDecimals] = useState(6);
 
@@ -92,6 +160,7 @@ export default function BatchPayoutScreen() {
   // Manual add
   const [manualRecipient, setManualRecipient] = useState('');
   const [manualAmount, setManualAmount] = useState('');
+  const [manualNftMint, setManualNftMint] = useState('');
 
   // Balances
   const [solBalance, setSolBalance] = useState<number | null>(null);
@@ -103,17 +172,77 @@ export default function BatchPayoutScreen() {
   const [currentRowIndex, setCurrentRowIndex] = useState(-1);
   const stopRequestedRef = useRef(false);
   const isExecutingRef = useRef(false);
+  
+  // Resume state
+  const [hasDraft, setHasDraft] = useState(false);
+  const [draftLoaded, setDraftLoaded] = useState(false);
 
   const feeConfigured = isFeeConfigured();
   const networkName = getNetworkName();
   const faucetUrl = getFaucetUrl();
 
-  // Get mint address
+  // Get mint address for tokens
   const getMintAddress = (): string => {
-    if (asset === 'SOL') return '';
-    if (asset === 'USDC') return getCurrentUsdcMint();
+    if (tokenAsset === 'SOL') return '';
+    if (tokenAsset === 'USDC') return getCurrentUsdcMint();
     return customMint;
   };
+
+  // Check for saved draft on mount
+  useEffect(() => {
+    const checkDraft = async () => {
+      const draft = await loadBatchDraft();
+      if (draft && draft.walletAddress === publicKey) {
+        // Has incomplete batch
+        const hasIncomplete = draft.rows.some(r => 
+          r.status === 'queued' || r.status === 'sent' || r.status === 'pending'
+        );
+        if (hasIncomplete && (draft.phase === 'preview' || draft.phase === 'executing' || draft.phase === 'done')) {
+          setHasDraft(true);
+        }
+      }
+      setDraftLoaded(true);
+    };
+    if (publicKey) {
+      checkDraft();
+    }
+  }, [publicKey]);
+
+  // Load draft
+  const handleLoadDraft = async () => {
+    const draft = await loadBatchDraft();
+    if (draft) {
+      setMode(draft.mode);
+      if (draft.tokenAsset) setTokenAsset(draft.tokenAsset);
+      if (draft.customMint) setCustomMint(draft.customMint);
+      setRows(draft.rows);
+      setPhase(draft.phase === 'executing' ? 'preview' : draft.phase);
+      setHasDraft(false);
+    }
+  };
+
+  // Discard draft
+  const handleDiscardDraft = async () => {
+    await clearBatchDraft();
+    setHasDraft(false);
+  };
+
+  // Save draft on row/phase changes
+  useEffect(() => {
+    if (!publicKey || rows.length === 0) return;
+    if (phase === 'input') return; // Don't save input phase
+    
+    const draft: BatchDraft = {
+      mode,
+      tokenAsset,
+      customMint,
+      rows,
+      phase,
+      createdAt: Date.now(),
+      walletAddress: publicKey,
+    };
+    saveBatchDraft(draft);
+  }, [rows, phase, mode, tokenAsset, customMint, publicKey]);
 
   // Load balances
   const loadBalances = useCallback(async () => {
@@ -123,7 +252,7 @@ export default function BatchPayoutScreen() {
       const sol = await getSolBalance(publicKey);
       setSolBalance(sol);
 
-      if (asset !== 'SOL') {
+      if (mode === 'TOKEN' && tokenAsset !== 'SOL') {
         const mint = getMintAddress();
         if (mint && isValidSolanaAddress(mint)) {
           const decimals = await getTokenDecimals(mint);
@@ -138,71 +267,139 @@ export default function BatchPayoutScreen() {
       console.error('Failed to load balances:', err);
     }
     setIsLoadingBalances(false);
-  }, [publicKey, asset, customMint]);
+  }, [publicKey, mode, tokenAsset, customMint]);
 
   useEffect(() => {
     loadBalances();
   }, [loadBalances]);
 
-  // Validate a single row
-  const validateRow = (recipient: string, amount: number): { isValid: boolean; error?: string } => {
-    if (!recipient.trim()) {
-      return { isValid: false, error: 'Missing recipient' };
-    }
-    if (!isValidSolanaAddress(recipient.trim())) {
-      return { isValid: false, error: 'Invalid address' };
-    }
-    if (isNaN(amount) || amount <= 0) {
-      return { isValid: false, error: 'Invalid amount' };
-    }
-    if (amount > 1000000) {
-      return { isValid: false, error: 'Amount too large' };
-    }
+  // Validate token row
+  const validateTokenRow = (recipient: string, amount: number): { isValid: boolean; error?: string } => {
+    if (!recipient.trim()) return { isValid: false, error: 'Missing recipient' };
+    if (!isValidSolanaAddress(recipient.trim())) return { isValid: false, error: 'Invalid address' };
+    if (isNaN(amount) || amount <= 0) return { isValid: false, error: 'Invalid amount' };
+    if (amount > 1000000) return { isValid: false, error: 'Amount too large' };
     return { isValid: true };
   };
 
-  // Parse paste input
-  const handleParsePaste = () => {
-    const lines = pasteInput.split('\n').filter(line => line.trim());
-    const newRows: PayoutRow[] = [];
+  // Validate NFT row
+  const validateNftRow = (recipient: string, nftMint: string): { isValid: boolean; error?: string } => {
+    if (!recipient.trim()) return { isValid: false, error: 'Missing recipient' };
+    if (!isValidSolanaAddress(recipient.trim())) return { isValid: false, error: 'Invalid recipient' };
+    if (!nftMint.trim()) return { isValid: false, error: 'Missing NFT mint' };
+    if (!isValidSolanaAddress(nftMint.trim())) return { isValid: false, error: 'Invalid NFT mint' };
+    return { isValid: true };
+  };
 
-    for (const line of lines) {
+  // Parse CSV/paste for tokens: recipient,amount[,mint]
+  const parseTokenInput = (text: string): TokenRow[] => {
+    const lines = text.split('\n').filter(line => line.trim() && !line.startsWith('#'));
+    return lines.map(line => {
       const parts = line.split(/[,\t]/).map(p => p.trim());
       const recipient = parts[0] || '';
       const amount = parseFloat(parts[1] || '0');
-      const validation = validateRow(recipient, amount);
-
-      newRows.push({
+      const validation = validateTokenRow(recipient, amount);
+      
+      return {
         id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        type: 'token' as const,
         recipient: recipient.trim(),
         amount: isNaN(amount) ? 0 : amount,
-        status: 'pending',
+        status: 'pending' as RowStatus,
         isValid: validation.isValid,
         validationError: validation.error,
-      });
-    }
+      };
+    });
+  };
 
+  // Parse CSV/paste for NFTs: recipient,mint
+  const parseNftInput = (text: string): NftRow[] => {
+    const lines = text.split('\n').filter(line => line.trim() && !line.startsWith('#'));
+    return lines.map(line => {
+      const parts = line.split(/[,\t]/).map(p => p.trim());
+      const recipient = parts[0] || '';
+      const nftMint = parts[1] || '';
+      const validation = validateNftRow(recipient, nftMint);
+      
+      return {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        type: 'nft' as const,
+        recipient: recipient.trim(),
+        nftMint: nftMint.trim(),
+        status: 'pending' as RowStatus,
+        isValid: validation.isValid,
+        validationError: validation.error,
+      };
+    });
+  };
+
+  // Handle paste parse
+  const handleParsePaste = () => {
+    if (!pasteInput.trim()) return;
+    
+    const newRows = mode === 'TOKEN' 
+      ? parseTokenInput(pasteInput)
+      : parseNftInput(pasteInput);
+    
     setRows(prev => [...prev, ...newRows]);
     setPasteInput('');
   };
 
+  // Handle CSV import
+  const handleImportCsv = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['text/csv', 'text/plain', 'text/comma-separated-values'],
+        copyToCacheDirectory: true,
+      });
+      
+      if (result.canceled || !result.assets?.[0]) return;
+      
+      const file = result.assets[0];
+      const content = await FileSystem.readAsStringAsync(file.uri);
+      
+      const newRows = mode === 'TOKEN'
+        ? parseTokenInput(content)
+        : parseNftInput(content);
+      
+      setRows(prev => [...prev, ...newRows]);
+    } catch (err) {
+      console.error('CSV import failed:', err);
+    }
+  };
+
   // Add manual row
   const handleAddManual = () => {
-    const amount = parseFloat(manualAmount);
-    const validation = validateRow(manualRecipient, amount);
-
-    const newRow: PayoutRow = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      recipient: manualRecipient.trim(),
-      amount: isNaN(amount) ? 0 : amount,
-      status: 'pending',
-      isValid: validation.isValid,
-      validationError: validation.error,
-    };
-
-    setRows(prev => [...prev, newRow]);
-    setManualRecipient('');
-    setManualAmount('');
+    if (mode === 'TOKEN') {
+      const amount = parseFloat(manualAmount);
+      const validation = validateTokenRow(manualRecipient, amount);
+      const newRow: TokenRow = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        type: 'token',
+        recipient: manualRecipient.trim(),
+        amount: isNaN(amount) ? 0 : amount,
+        status: 'pending',
+        isValid: validation.isValid,
+        validationError: validation.error,
+      };
+      setRows(prev => [...prev, newRow]);
+      setManualRecipient('');
+      setManualAmount('');
+    } else {
+      const validation = validateNftRow(manualRecipient, manualNftMint);
+      const newRow: NftRow = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        type: 'nft',
+        recipient: manualRecipient.trim(),
+        nftMint: manualNftMint.trim(),
+        status: 'pending',
+        isValid: validation.isValid,
+        validationError: validation.error,
+      };
+      setRows(prev => [...prev, newRow]);
+      setManualRecipient('');
+      setManualNftMint('');
+    }
   };
 
   // Remove row
@@ -218,9 +415,15 @@ export default function BatchPayoutScreen() {
   // Calculate totals
   const validRows = rows.filter(r => r.isValid);
   const invalidRows = rows.filter(r => !r.isValid);
-  const totalAmount = validRows.reduce((sum, r) => sum + r.amount, 0);
-  const totalFee = validRows.reduce((sum, r) => sum + calculateFee(r.amount), 0);
-  const totalCost = totalAmount + totalFee;
+  
+  const tokenRows = validRows.filter((r): r is TokenRow => r.type === 'token');
+  const nftRows = validRows.filter((r): r is NftRow => r.type === 'nft');
+  
+  const totalTokenAmount = tokenRows.reduce((sum, r) => sum + r.amount, 0);
+  const totalTokenFee = tokenRows.reduce((sum, r) => sum + calculateFee(r.amount), 0);
+  const totalTokenCost = totalTokenAmount + totalTokenFee;
+  
+  const totalNftFee = nftRows.length * NFT_FEE_SOL;
 
   // Check if can proceed
   const canProceed = validRows.length > 0 && feeConfigured;
@@ -228,7 +431,6 @@ export default function BatchPayoutScreen() {
   // Proceed to preview
   const handleProceedToPreview = () => {
     if (!canProceed) return;
-    // Mark valid rows as queued
     setRows(prev => prev.map(r => ({
       ...r,
       status: r.isValid ? 'queued' : 'pending',
@@ -245,52 +447,37 @@ export default function BatchPayoutScreen() {
 
   // Update row status
   const updateRowStatus = (id: string, updates: Partial<PayoutRow>) => {
-    setRows(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
+    setRows(prev => prev.map(r => r.id === id ? { ...r, ...updates } as PayoutRow : r));
   };
 
-  // Execute single row
-  const executeRow = async (row: PayoutRow): Promise<void> => {
+  // Execute token row
+  const executeTokenRow = async (row: TokenRow): Promise<void> => {
     if (!publicKey || !row.isValid) return;
 
     const feeAmount = calculateFee(row.amount);
-
     updateRowStatus(row.id, { status: 'sending' });
 
     try {
       let signature: string;
 
-      if (asset === 'SOL') {
-        signature = await sendSolTransferWithFee(
-          publicKey,
-          row.recipient,
-          row.amount,
-          feeAmount
-        );
+      if (tokenAsset === 'SOL') {
+        signature = await sendSolTransferWithFee(publicKey, row.recipient, row.amount, feeAmount);
       } else {
         const mint = getMintAddress();
-        signature = await sendSplTokenTransferWithFee(
-          publicKey,
-          row.recipient,
-          mint,
-          row.amount,
-          feeAmount,
-          tokenDecimals
-        );
+        signature = await sendSplTokenTransferWithFee(publicKey, row.recipient, mint, row.amount, feeAmount, tokenDecimals);
       }
 
       updateRowStatus(row.id, { status: 'sent', signature });
 
-      // Record in tx history
       await addTxHistory({
         signature,
         from: publicKey,
         to: row.recipient,
         amount: row.amount,
-        currency: asset === 'SOL' ? 'SOL' : 'USDC',
+        currency: tokenAsset === 'SOL' ? 'SOL' : 'USDC',
         status: 'pending',
       });
 
-      // Wait for confirmation
       const result = await waitForConfirmation(signature);
 
       if (result.status === 'confirmed') {
@@ -300,7 +487,47 @@ export default function BatchPayoutScreen() {
         updateRowStatus(row.id, { status: 'failed', error: result.error || 'Failed' });
         await updateTxStatus(signature, 'failed', result.error);
       } else {
-        // Still pending after timeout - leave as sent
+        updateRowStatus(row.id, { status: 'sent', error: 'Confirmation pending' });
+      }
+    } catch (err: any) {
+      const { type, message } = categorizeError(err);
+      if (type === 'rejected') {
+        updateRowStatus(row.id, { status: 'queued', error: 'Cancelled' });
+      } else {
+        updateRowStatus(row.id, { status: 'failed', error: message });
+      }
+    }
+  };
+
+  // Execute NFT row
+  const executeNftRow = async (row: NftRow): Promise<void> => {
+    if (!publicKey || !row.isValid) return;
+
+    updateRowStatus(row.id, { status: 'sending' });
+
+    try {
+      const signature = await sendNftTransferWithFee(publicKey, row.recipient, row.nftMint, NFT_FEE_SOL);
+
+      updateRowStatus(row.id, { status: 'sent', signature });
+
+      await addTxHistory({
+        signature,
+        from: publicKey,
+        to: row.recipient,
+        amount: 1,
+        currency: 'SOL', // NFT, but fee is in SOL
+        status: 'pending',
+      });
+
+      const result = await waitForConfirmation(signature);
+
+      if (result.status === 'confirmed') {
+        updateRowStatus(row.id, { status: 'confirmed' });
+        await updateTxStatus(signature, 'confirmed');
+      } else if (result.status === 'failed') {
+        updateRowStatus(row.id, { status: 'failed', error: result.error || 'Failed' });
+        await updateTxStatus(signature, 'failed', result.error);
+      } else {
         updateRowStatus(row.id, { status: 'sent', error: 'Confirmation pending' });
       }
     } catch (err: any) {
@@ -327,9 +554,13 @@ export default function BatchPayoutScreen() {
 
       const row = queuedRows[i];
       setCurrentRowIndex(i);
-      await executeRow(row);
+      
+      if (row.type === 'token') {
+        await executeTokenRow(row);
+      } else {
+        await executeNftRow(row);
+      }
 
-      // Small delay between txs
       if (i < queuedRows.length - 1 && !stopRequestedRef.current) {
         await new Promise(res => setTimeout(res, 500));
       }
@@ -347,10 +578,9 @@ export default function BatchPayoutScreen() {
 
   // Retry failed/queued rows
   const handleRetryFailed = async () => {
-    // Reset failed rows to queued
     setRows(prev => prev.map(r => 
       (r.status === 'failed' || (r.status === 'queued' && r.error)) 
-        ? { ...r, status: 'queued', error: undefined } 
+        ? { ...r, status: 'queued', error: undefined } as PayoutRow
         : r
     ));
     setPhase('preview');
@@ -378,6 +608,50 @@ export default function BatchPayoutScreen() {
     }
   };
 
+  // Generate report text
+  const generateReport = (): string => {
+    const lines: string[] = [];
+    lines.push(`Batch Payout Report - ${new Date().toISOString()}`);
+    lines.push(`Mode: ${mode}`);
+    if (mode === 'TOKEN') {
+      lines.push(`Asset: ${tokenAsset}${tokenAsset === 'CUSTOM' ? ` (${customMint})` : ''}`);
+    }
+    lines.push(`Total rows: ${rows.length}`);
+    lines.push(`Confirmed: ${rows.filter(r => r.status === 'confirmed').length}`);
+    lines.push(`Failed: ${rows.filter(r => r.status === 'failed').length}`);
+    lines.push(`Pending: ${rows.filter(r => r.status === 'sent').length}`);
+    lines.push('');
+    lines.push('--- Details ---');
+    
+    rows.forEach((row, i) => {
+      if (row.type === 'token') {
+        lines.push(`${i + 1}. ${shortenAddress(row.recipient, 6)} | ${row.amount} | ${row.status}${row.signature ? ` | ${row.signature}` : ''}${row.error ? ` | ${row.error}` : ''}`);
+      } else {
+        lines.push(`${i + 1}. ${shortenAddress(row.recipient, 6)} | NFT: ${shortenAddress(row.nftMint, 6)} | ${row.status}${row.signature ? ` | ${row.signature}` : ''}${row.error ? ` | ${row.error}` : ''}`);
+      }
+    });
+    
+    return lines.join('\n');
+  };
+
+  // Copy report
+  const handleCopyReport = async () => {
+    const report = generateReport();
+    await Clipboard.setStringAsync(report);
+  };
+
+  // Share report
+  const handleShareReport = async () => {
+    const report = generateReport();
+    await Share.share({ message: report });
+  };
+
+  // Finish and clear draft
+  const handleFinish = async () => {
+    await clearBatchDraft();
+    router.back();
+  };
+
   // Stats
   const confirmedCount = rows.filter(r => r.status === 'confirmed').length;
   const failedCount = rows.filter(r => r.status === 'failed').length;
@@ -386,7 +660,7 @@ export default function BatchPayoutScreen() {
 
   // Render row item
   const renderRowItem = ({ item, index }: { item: PayoutRow; index: number }) => {
-    const fee = calculateFee(item.amount);
+    const fee = item.type === 'token' ? calculateFee(item.amount) : NFT_FEE_SOL;
     const statusColor = {
       pending: COLORS.textMuted,
       queued: COLORS.textSecondary,
@@ -421,18 +695,37 @@ export default function BatchPayoutScreen() {
               {shortenAddress(item.recipient, 6)}
             </Text>
           </View>
-          <View style={styles.rowField}>
-            <Text style={styles.rowLabel}>Amount</Text>
-            <Text style={styles.rowValue}>
-              {item.amount.toFixed(asset === 'SOL' ? 4 : 2)}
-            </Text>
-          </View>
-          <View style={styles.rowField}>
-            <Text style={styles.rowLabel}>Fee</Text>
-            <Text style={styles.rowValueMuted}>
-              {fee.toFixed(asset === 'SOL' ? 6 : 4)}
-            </Text>
-          </View>
+          {item.type === 'token' ? (
+            <>
+              <View style={styles.rowField}>
+                <Text style={styles.rowLabel}>Amount</Text>
+                <Text style={styles.rowValue}>
+                  {item.amount.toFixed(tokenAsset === 'SOL' ? 4 : 2)}
+                </Text>
+              </View>
+              <View style={styles.rowField}>
+                <Text style={styles.rowLabel}>Fee</Text>
+                <Text style={styles.rowValueMuted}>
+                  {fee.toFixed(tokenAsset === 'SOL' ? 6 : 4)}
+                </Text>
+              </View>
+            </>
+          ) : (
+            <>
+              <View style={styles.rowField}>
+                <Text style={styles.rowLabel}>NFT</Text>
+                <Text style={styles.rowValue} numberOfLines={1}>
+                  {shortenAddress(item.nftMint, 6)}
+                </Text>
+              </View>
+              <View style={styles.rowField}>
+                <Text style={styles.rowLabel}>Fee</Text>
+                <Text style={styles.rowValueMuted}>
+                  {NFT_FEE_SOL} SOL
+                </Text>
+              </View>
+            </>
+          )}
         </View>
 
         {!item.isValid && (
@@ -444,10 +737,7 @@ export default function BatchPayoutScreen() {
         )}
 
         {item.signature && (
-          <TouchableOpacity 
-            style={styles.rowLink}
-            onPress={() => {}}
-          >
+          <TouchableOpacity style={styles.rowLink}>
             <Text style={styles.rowLinkText}>
               Tx: {shortenAddress(item.signature, 8)}
             </Text>
@@ -474,6 +764,53 @@ export default function BatchPayoutScreen() {
       </Card>
     );
   };
+
+  // ========== LOADING ==========
+  if (!draftLoaded) {
+    return (
+      <>
+        <Stack.Screen options={{ title: 'Batch Payout' }} />
+        <View style={styles.container}>
+          <View style={styles.centerContent}>
+            <ActivityIndicator size="large" color={COLORS.primary} />
+          </View>
+        </View>
+      </>
+    );
+  }
+
+  // ========== RESUME DRAFT PROMPT ==========
+  if (hasDraft) {
+    return (
+      <>
+        <Stack.Screen options={{ title: 'Resume Batch' }} />
+        <View style={styles.container}>
+          <View style={styles.centerContent}>
+            <Text style={styles.resumeEmoji}>📦</Text>
+            <Text style={styles.resumeTitle}>Incomplete Batch Found</Text>
+            <Text style={styles.resumeMessage}>
+              You have an unfinished batch payout. Would you like to continue where you left off?
+            </Text>
+            <View style={styles.resumeButtons}>
+              <Button
+                title="Continue"
+                onPress={handleLoadDraft}
+                size="large"
+                style={styles.resumeButton}
+              />
+              <Button
+                title="Start Fresh"
+                onPress={handleDiscardDraft}
+                variant="outline"
+                size="large"
+                style={styles.resumeButton}
+              />
+            </View>
+          </View>
+        </View>
+      </>
+    );
+  }
 
   // ========== NOT CONNECTED ==========
   if (!publicKey) {
@@ -539,6 +876,21 @@ export default function BatchPayoutScreen() {
               </View>
             </Card>
 
+            {/* Export options */}
+            <View style={styles.exportSection}>
+              <SectionHeader title="Export Report" />
+              <View style={styles.exportButtons}>
+                <TouchableOpacity style={styles.exportBtn} onPress={handleCopyReport}>
+                  <Text style={styles.exportBtnIcon}>📋</Text>
+                  <Text style={styles.exportBtnText}>Copy Summary</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.exportBtn} onPress={handleShareReport}>
+                  <Text style={styles.exportBtnIcon}>📤</Text>
+                  <Text style={styles.exportBtnText}>Share</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
             <FlatList
               data={rows.filter(r => r.isValid)}
               renderItem={renderRowItem}
@@ -560,7 +912,7 @@ export default function BatchPayoutScreen() {
             )}
             <Button
               title="Done"
-              onPress={() => router.back()}
+              onPress={handleFinish}
               size="large"
               style={styles.flexButton}
             />
@@ -572,6 +924,8 @@ export default function BatchPayoutScreen() {
 
   // ========== EXECUTING PHASE ==========
   if (phase === 'executing') {
+    const queuedRowsCount = rows.filter(r => r.status === 'queued').length;
+    
     return (
       <>
         <Stack.Screen options={{ title: 'Sending...' }} />
@@ -580,7 +934,7 @@ export default function BatchPayoutScreen() {
             <ActivityIndicator size="large" color={COLORS.primary} />
             <Text style={styles.executingTitle}>Sending Payouts</Text>
             <Text style={styles.executingProgress}>
-              {currentRowIndex + 1} of {validRows.length}
+              {currentRowIndex + 1} of {queuedRowsCount + confirmedCount + failedCount}
             </Text>
 
             <Card style={styles.statsCard}>
@@ -623,31 +977,46 @@ export default function BatchPayoutScreen() {
             <View style={styles.previewHeader}>
               <Text style={styles.previewTitle}>Review Batch</Text>
               <Text style={styles.previewSubtitle}>
-                {validRows.length} payout{validRows.length !== 1 ? 's' : ''} ready
+                {validRows.length} {mode === 'TOKEN' ? 'payout' : 'NFT'}{validRows.length !== 1 ? 's' : ''} ready
               </Text>
             </View>
 
             {/* Totals */}
             <Card style={styles.totalsCard}>
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Total Payouts</Text>
-                <Text style={styles.totalValue}>
-                  {totalAmount.toFixed(asset === 'SOL' ? 4 : 2)} {asset === 'CUSTOM' ? 'tokens' : asset}
-                </Text>
-              </View>
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Service Fee ({FEE_PERCENT}%)</Text>
-                <Text style={styles.totalValueMuted}>
-                  {totalFee.toFixed(asset === 'SOL' ? 6 : 4)} {asset === 'CUSTOM' ? 'tokens' : asset}
-                </Text>
-              </View>
-              <View style={styles.totalDivider} />
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabelBold}>Total Cost</Text>
-                <Text style={styles.totalValueBold}>
-                  {totalCost.toFixed(asset === 'SOL' ? 4 : 2)} {asset === 'CUSTOM' ? 'tokens' : asset}
-                </Text>
-              </View>
+              {mode === 'TOKEN' ? (
+                <>
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Total Payouts</Text>
+                    <Text style={styles.totalValue}>
+                      {totalTokenAmount.toFixed(tokenAsset === 'SOL' ? 4 : 2)} {tokenAsset === 'CUSTOM' ? 'tokens' : tokenAsset}
+                    </Text>
+                  </View>
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Service Fee ({FEE_PERCENT}%)</Text>
+                    <Text style={styles.totalValueMuted}>
+                      {totalTokenFee.toFixed(tokenAsset === 'SOL' ? 6 : 4)} {tokenAsset === 'CUSTOM' ? 'tokens' : tokenAsset}
+                    </Text>
+                  </View>
+                  <View style={styles.totalDivider} />
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabelBold}>Total Cost</Text>
+                    <Text style={styles.totalValueBold}>
+                      {totalTokenCost.toFixed(tokenAsset === 'SOL' ? 4 : 2)} {tokenAsset === 'CUSTOM' ? 'tokens' : tokenAsset}
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>NFTs to Transfer</Text>
+                    <Text style={styles.totalValue}>{nftRows.length}</Text>
+                  </View>
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Fee ({NFT_FEE_SOL} SOL each)</Text>
+                    <Text style={styles.totalValueMuted}>{totalNftFee.toFixed(4)} SOL</Text>
+                  </View>
+                </>
+              )}
               <Text style={styles.feeNote}>
                 + network fees (~{(validRows.length * 0.00025).toFixed(5)} SOL)
               </Text>
@@ -659,22 +1028,21 @@ export default function BatchPayoutScreen() {
             {/* Balance check */}
             <Card style={styles.balanceCard}>
               <View style={styles.balanceRow}>
-                <Text style={styles.balanceLabel}>Your Balance</Text>
-                <Text style={styles.balanceValue}>
-                  {asset === 'SOL'
-                    ? `${(solBalance ?? 0).toFixed(4)} SOL`
-                    : `${(tokenBalance ?? 0).toFixed(2)} tokens`}
-                </Text>
+                <Text style={styles.balanceLabel}>SOL Balance</Text>
+                <Text style={styles.balanceValue}>{(solBalance ?? 0).toFixed(4)} SOL</Text>
               </View>
+              {mode === 'TOKEN' && tokenAsset !== 'SOL' && (
+                <View style={styles.balanceRow}>
+                  <Text style={styles.balanceLabel}>Token Balance</Text>
+                  <Text style={styles.balanceValue}>{(tokenBalance ?? 0).toFixed(2)}</Text>
+                </View>
+              )}
               {solBalance !== null && solBalance < MIN_SOL_FOR_FEES * validRows.length && (
-                <Text style={styles.warningText}>
-                  ⚠️ Low SOL for network fees
-                </Text>
+                <Text style={styles.warningText}>⚠️ Low SOL for network fees</Text>
               )}
             </Card>
 
-            {/* Row list */}
-            <SectionHeader title="Payouts" subtitle={`${validRows.length} recipients`} />
+            <SectionHeader title={mode === 'TOKEN' ? 'Payouts' : 'NFT Transfers'} subtitle={`${validRows.length} recipients`} />
             <FlatList
               data={validRows}
               renderItem={renderRowItem}
@@ -721,38 +1089,62 @@ export default function BatchPayoutScreen() {
             </Text>
           </View>
 
-          {/* Asset Selection */}
-          <SectionHeader title="Asset" />
-          <View style={styles.assetToggle}>
-            {(['SOL', 'USDC', 'CUSTOM'] as PayoutAsset[]).map((a) => (
-              <TouchableOpacity
-                key={a}
-                style={[styles.assetOption, asset === a && styles.assetOptionActive]}
-                onPress={() => setAsset(a)}
-              >
-                <Text style={[styles.assetText, asset === a && styles.assetTextActive]}>
-                  {a}
-                </Text>
-              </TouchableOpacity>
-            ))}
+          {/* Mode Toggle */}
+          <SectionHeader title="Batch Type" />
+          <View style={styles.modeToggle}>
+            <TouchableOpacity
+              style={[styles.modeOption, mode === 'TOKEN' && styles.modeOptionActive]}
+              onPress={() => { setMode('TOKEN'); setRows([]); }}
+            >
+              <Text style={[styles.modeText, mode === 'TOKEN' && styles.modeTextActive]}>
+                💰 Tokens
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.modeOption, mode === 'NFT' && styles.modeOptionActive]}
+              onPress={() => { setMode('NFT'); setRows([]); }}
+            >
+              <Text style={[styles.modeText, mode === 'NFT' && styles.modeTextActive]}>
+                🖼️ NFTs
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          {/* Custom Mint Input */}
-          {asset === 'CUSTOM' && (
-            <View style={styles.customMintSection}>
-              <TextInput
-                style={styles.customMintInput}
-                value={customMint}
-                onChangeText={setCustomMint}
-                placeholder="Token mint address..."
-                placeholderTextColor={COLORS.textMuted}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              {customMint && !isValidSolanaAddress(customMint) && (
-                <Text style={styles.inputError}>Invalid mint address</Text>
+          {/* Token Asset Selection */}
+          {mode === 'TOKEN' && (
+            <>
+              <SectionHeader title="Asset" />
+              <View style={styles.assetToggle}>
+                {(['SOL', 'USDC', 'CUSTOM'] as TokenAsset[]).map((a) => (
+                  <TouchableOpacity
+                    key={a}
+                    style={[styles.assetOption, tokenAsset === a && styles.assetOptionActive]}
+                    onPress={() => setTokenAsset(a)}
+                  >
+                    <Text style={[styles.assetText, tokenAsset === a && styles.assetTextActive]}>
+                      {a}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {tokenAsset === 'CUSTOM' && (
+                <View style={styles.customMintSection}>
+                  <TextInput
+                    style={styles.customMintInput}
+                    value={customMint}
+                    onChangeText={setCustomMint}
+                    placeholder="Token mint address..."
+                    placeholderTextColor={COLORS.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  {customMint && !isValidSolanaAddress(customMint) && (
+                    <Text style={styles.inputError}>Invalid mint address</Text>
+                  )}
+                </View>
               )}
-            </View>
+            </>
           )}
 
           {/* Balance */}
@@ -762,9 +1154,9 @@ export default function BatchPayoutScreen() {
             ) : (
               <>
                 <Text style={styles.balanceInfoText}>
-                  Balance: {asset === 'SOL'
-                    ? `${(solBalance ?? 0).toFixed(4)} SOL`
-                    : `${(tokenBalance ?? 0).toFixed(2)} ${asset === 'USDC' ? 'USDC' : 'tokens'}`}
+                  SOL: {(solBalance ?? 0).toFixed(4)}
+                  {mode === 'TOKEN' && tokenAsset !== 'SOL' && tokenBalance !== null && 
+                    ` | Token: ${tokenBalance.toFixed(2)}`}
                 </Text>
                 <TouchableOpacity onPress={loadBalances}>
                   <Text style={styles.refreshLink}>Refresh</Text>
@@ -773,13 +1165,27 @@ export default function BatchPayoutScreen() {
             )}
           </View>
 
+          {/* Import CSV */}
+          <SectionHeader title="Import" />
+          <TouchableOpacity style={styles.importButton} onPress={handleImportCsv}>
+            <Text style={styles.importButtonIcon}>📄</Text>
+            <Text style={styles.importButtonText}>Import CSV File</Text>
+          </TouchableOpacity>
+          <Text style={styles.importHint}>
+            {mode === 'TOKEN' 
+              ? 'Format: recipient,amount (one per line)'
+              : 'Format: recipient,nft_mint (one per line)'}
+          </Text>
+
           {/* Paste Input */}
-          <SectionHeader title="Paste Recipients" subtitle="recipient,amount (one per line)" />
+          <SectionHeader title="Or Paste" subtitle={mode === 'TOKEN' ? 'recipient,amount' : 'recipient,mint'} />
           <TextInput
             style={styles.pasteInput}
             value={pasteInput}
             onChangeText={setPasteInput}
-            placeholder={`address1,10\naddress2,25\naddress3,5.5`}
+            placeholder={mode === 'TOKEN' 
+              ? `address1,10\naddress2,25\naddress3,5.5`
+              : `recipient1,nftMint1\nrecipient2,nftMint2`}
             placeholderTextColor={COLORS.textMuted}
             multiline
             numberOfLines={5}
@@ -800,22 +1206,33 @@ export default function BatchPayoutScreen() {
               style={[styles.manualInput, styles.manualInputRecipient]}
               value={manualRecipient}
               onChangeText={setManualRecipient}
-              placeholder="Recipient address"
+              placeholder="Recipient"
               placeholderTextColor={COLORS.textMuted}
               autoCapitalize="none"
             />
-            <TextInput
-              style={[styles.manualInput, styles.manualInputAmount]}
-              value={manualAmount}
-              onChangeText={setManualAmount}
-              placeholder="Amount"
-              placeholderTextColor={COLORS.textMuted}
-              keyboardType="decimal-pad"
-            />
+            {mode === 'TOKEN' ? (
+              <TextInput
+                style={[styles.manualInput, styles.manualInputAmount]}
+                value={manualAmount}
+                onChangeText={setManualAmount}
+                placeholder="Amount"
+                placeholderTextColor={COLORS.textMuted}
+                keyboardType="decimal-pad"
+              />
+            ) : (
+              <TextInput
+                style={[styles.manualInput, styles.manualInputAmount]}
+                value={manualNftMint}
+                onChangeText={setManualNftMint}
+                placeholder="NFT Mint"
+                placeholderTextColor={COLORS.textMuted}
+                autoCapitalize="none"
+              />
+            )}
             <TouchableOpacity
               style={styles.addButton}
               onPress={handleAddManual}
-              disabled={!manualRecipient.trim() || !manualAmount.trim()}
+              disabled={!manualRecipient.trim() || (mode === 'TOKEN' ? !manualAmount.trim() : !manualNftMint.trim())}
             >
               <Text style={styles.addButtonText}>+</Text>
             </TouchableOpacity>
@@ -843,24 +1260,35 @@ export default function BatchPayoutScreen() {
 
               {/* Summary */}
               <Card style={styles.summaryCard}>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Total Amount</Text>
-                  <Text style={styles.summaryValue}>
-                    {totalAmount.toFixed(asset === 'SOL' ? 4 : 2)}
-                  </Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Total Fee ({FEE_PERCENT}%)</Text>
-                  <Text style={styles.summaryValueMuted}>
-                    {totalFee.toFixed(asset === 'SOL' ? 6 : 4)}
-                  </Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabelBold}>Total Cost</Text>
-                  <Text style={styles.summaryValueBold}>
-                    {totalCost.toFixed(asset === 'SOL' ? 4 : 2)} {asset === 'CUSTOM' ? 'tokens' : asset}
-                  </Text>
-                </View>
+                {mode === 'TOKEN' ? (
+                  <>
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryLabel}>Total Amount</Text>
+                      <Text style={styles.summaryValue}>{totalTokenAmount.toFixed(tokenAsset === 'SOL' ? 4 : 2)}</Text>
+                    </View>
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryLabel}>Total Fee ({FEE_PERCENT}%)</Text>
+                      <Text style={styles.summaryValueMuted}>{totalTokenFee.toFixed(tokenAsset === 'SOL' ? 6 : 4)}</Text>
+                    </View>
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryLabelBold}>Total Cost</Text>
+                      <Text style={styles.summaryValueBold}>
+                        {totalTokenCost.toFixed(tokenAsset === 'SOL' ? 4 : 2)} {tokenAsset === 'CUSTOM' ? 'tokens' : tokenAsset}
+                      </Text>
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryLabel}>NFTs</Text>
+                      <Text style={styles.summaryValue}>{nftRows.length}</Text>
+                    </View>
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryLabel}>Total Fee</Text>
+                      <Text style={styles.summaryValueMuted}>{totalNftFee.toFixed(4)} SOL</Text>
+                    </View>
+                  </>
+                )}
               </Card>
             </>
           )}
@@ -872,7 +1300,7 @@ export default function BatchPayoutScreen() {
                 ⚠️ Low SOL! Need ~{MIN_SOL_FOR_FEES} SOL for fees.
               </Text>
               {faucetUrl && (
-                <TouchableOpacity onPress={() => {}}>
+                <TouchableOpacity>
                   <Text style={styles.warningLink}>Get {networkName} SOL →</Text>
                 </TouchableOpacity>
               )}
@@ -884,7 +1312,7 @@ export default function BatchPayoutScreen() {
 
         <View style={styles.footer}>
           <Button
-            title={`Continue (${validRows.length} payouts)`}
+            title={`Continue (${validRows.length} ${mode === 'TOKEN' ? 'payouts' : 'NFTs'})`}
             onPress={handleProceedToPreview}
             disabled={!canProceed}
             size="large"
@@ -901,31 +1329,45 @@ export default function BatchPayoutScreen() {
 // ============================================
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  scrollContent: {
-    flex: 1,
-    padding: SPACING.xl,
-  },
-  centerContent: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: SPACING.xl,
-  },
+  container: { flex: 1, backgroundColor: COLORS.background },
+  scrollContent: { flex: 1, padding: SPACING.xl },
+  centerContent: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: SPACING.xl },
 
   // Error states
   errorEmoji: { fontSize: 48, marginBottom: SPACING.lg },
   errorTitle: { ...TYPOGRAPHY.h2, color: COLORS.error, marginBottom: SPACING.sm },
   errorMessage: { ...TYPOGRAPHY.body, color: COLORS.textSecondary, textAlign: 'center', marginBottom: SPACING['2xl'] },
 
+  // Resume
+  resumeEmoji: { fontSize: 48, marginBottom: SPACING.lg },
+  resumeTitle: { ...TYPOGRAPHY.h2, color: COLORS.text, marginBottom: SPACING.sm },
+  resumeMessage: { ...TYPOGRAPHY.body, color: COLORS.textSecondary, textAlign: 'center', marginBottom: SPACING['2xl'], maxWidth: 280 },
+  resumeButtons: { gap: SPACING.md, width: '100%', maxWidth: 280 },
+  resumeButton: { width: '100%' },
+
   // Input phase
   inputHeader: { alignItems: 'center', marginBottom: SPACING['2xl'] },
   inputEmoji: { fontSize: 48, marginBottom: SPACING.md },
   inputTitle: { ...TYPOGRAPHY.h2, color: COLORS.text, marginBottom: SPACING.xs },
   inputSubtitle: { ...TYPOGRAPHY.body, color: COLORS.textSecondary },
+
+  // Mode toggle
+  modeToggle: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.md,
+    padding: SPACING.xs,
+    marginBottom: SPACING.lg,
+  },
+  modeOption: {
+    flex: 1,
+    paddingVertical: SPACING.md,
+    alignItems: 'center',
+    borderRadius: RADIUS.sm,
+  },
+  modeOptionActive: { backgroundColor: COLORS.primary },
+  modeText: { ...TYPOGRAPHY.smallMedium, color: COLORS.textSecondary },
+  modeTextActive: { color: COLORS.text },
 
   // Asset toggle
   assetToggle: {
@@ -968,6 +1410,21 @@ const styles = StyleSheet.create({
   balanceInfoText: { ...TYPOGRAPHY.small, color: COLORS.textSecondary },
   refreshLink: { ...TYPOGRAPHY.smallMedium, color: COLORS.primary },
 
+  // Import
+  importButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
+    gap: SPACING.sm,
+    marginBottom: SPACING.sm,
+  },
+  importButtonIcon: { fontSize: 20 },
+  importButtonText: { ...TYPOGRAPHY.bodyMedium, color: COLORS.text },
+  importHint: { ...TYPOGRAPHY.caption, color: COLORS.textMuted, textAlign: 'center', marginBottom: SPACING['2xl'] },
+
   // Paste input
   pasteInput: {
     backgroundColor: COLORS.surface,
@@ -983,11 +1440,7 @@ const styles = StyleSheet.create({
   parseButton: { alignSelf: 'flex-end', marginBottom: SPACING['2xl'] },
 
   // Manual add
-  manualRow: {
-    flexDirection: 'row',
-    gap: SPACING.sm,
-    marginBottom: SPACING['2xl'],
-  },
+  manualRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING['2xl'] },
   manualInput: {
     backgroundColor: COLORS.surface,
     borderRadius: RADIUS.md,
@@ -1008,35 +1461,17 @@ const styles = StyleSheet.create({
   addButtonText: { fontSize: 24, color: COLORS.text, fontWeight: '300' },
 
   // Row list
-  rowListHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
+  rowListHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   clearAllText: { ...TYPOGRAPHY.smallMedium, color: COLORS.error },
   rowList: { paddingBottom: SPACING.md },
 
   // Row card
-  rowCard: {
-    marginBottom: SPACING.sm,
-    padding: SPACING.md,
-    position: 'relative',
-  },
-  rowCardInvalid: {
-    borderWidth: 1,
-    borderColor: COLORS.error,
-  },
-  rowHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: SPACING.sm,
-  },
+  rowCard: { marginBottom: SPACING.sm, padding: SPACING.md, position: 'relative' },
+  rowCardInvalid: { borderWidth: 1, borderColor: COLORS.error },
+  rowHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: SPACING.sm },
   rowIndex: { ...TYPOGRAPHY.caption, color: COLORS.textMuted },
   rowStatus: { ...TYPOGRAPHY.caption },
-  rowContent: {
-    flexDirection: 'row',
-    gap: SPACING.md,
-  },
+  rowContent: { flexDirection: 'row', gap: SPACING.md },
   rowField: { flex: 1 },
   rowLabel: { ...TYPOGRAPHY.caption, color: COLORS.textMuted, marginBottom: 2 },
   rowValue: { ...TYPOGRAPHY.small, color: COLORS.text },
@@ -1113,17 +1548,12 @@ const styles = StyleSheet.create({
 
   // Balance card
   balanceCard: { marginBottom: SPACING.lg },
-  balanceRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  balanceRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: SPACING.sm },
   balanceLabel: { ...TYPOGRAPHY.body, color: COLORS.textSecondary },
   balanceValue: { ...TYPOGRAPHY.bodyMedium, color: COLORS.text },
 
   // Executing phase
-  executingContent: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: SPACING.xl,
-  },
+  executingContent: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: SPACING.xl },
   executingTitle: { ...TYPOGRAPHY.h2, color: COLORS.text, marginTop: SPACING.xl, marginBottom: SPACING.sm },
   executingProgress: { ...TYPOGRAPHY.body, color: COLORS.textSecondary, marginBottom: SPACING['2xl'] },
   stopButton: { marginTop: SPACING['2xl'], minWidth: 150 },
@@ -1139,4 +1569,20 @@ const styles = StyleSheet.create({
   doneHeader: { alignItems: 'center', marginBottom: SPACING['2xl'] },
   doneEmoji: { fontSize: 48, marginBottom: SPACING.md },
   doneTitle: { ...TYPOGRAPHY.h2, color: COLORS.text },
+
+  // Export section
+  exportSection: { marginBottom: SPACING.lg },
+  exportButtons: { flexDirection: 'row', gap: SPACING.md },
+  exportBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACING.lg,
+    gap: SPACING.sm,
+  },
+  exportBtnIcon: { fontSize: 18 },
+  exportBtnText: { ...TYPOGRAPHY.smallMedium, color: COLORS.primary },
 });

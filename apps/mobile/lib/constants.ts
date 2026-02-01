@@ -68,6 +68,9 @@ export const isFeeConfigured = (): boolean => {
   return !!FEE_WALLET && FEE_WALLET.length >= 32;
 };
 
+// NFT Fee Configuration (flat SOL fee per NFT)
+export const NFT_FEE_SOL = parseFloat(process.env.EXPO_PUBLIC_NFT_FEE_SOL || '0.002');
+
 // Deep link scheme
 export const APP_SCHEME = 'spliter';
 
@@ -134,4 +137,5 @@ export const STORAGE_KEYS = {
   TX_HISTORY: 'spliter_tx_history',
   WALLET: 'spliter_wallet',
   APP_HYDRATED: 'spliter_hydrated',
+  BATCH_DRAFT: 'spliter_batch_draft',
 } as const;

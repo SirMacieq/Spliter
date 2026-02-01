@@ -29,6 +29,7 @@ import {
   FEE_WALLET,
   calculateFee,
   isFeeConfigured,
+  NFT_FEE_SOL,
 } from './constants';
 
 const APP_IDENTITY = {
@@ -628,6 +629,117 @@ export const sendSplTokenTransferWithFee = async (
   });
   
   return signature;
+};
+
+// ============================================
+// NFT Transfer with SOL fee (for NFT batch)
+// ============================================
+
+// Send NFT transfer with flat SOL fee
+export const sendNftTransferWithFee = async (
+  fromWallet: string,
+  toWallet: string,
+  nftMint: string,
+  feeSol: number = NFT_FEE_SOL,
+): Promise<string> => {
+  if (!isFeeConfigured()) {
+    throw new Error('Fee wallet not configured');
+  }
+
+  const connection = getConnection();
+  const mint = new PublicKey(nftMint);
+  const fromPubkey = new PublicKey(fromWallet);
+  const toPubkey = new PublicKey(toWallet);
+  const feePubkey = new PublicKey(FEE_WALLET);
+  
+  const fromAta = await getAssociatedTokenAddress(mint, fromPubkey);
+  const toAta = await getAssociatedTokenAddress(mint, toPubkey);
+  
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+  const transaction = new Transaction({
+    feePayer: fromPubkey,
+    blockhash,
+    lastValidBlockHeight,
+  });
+  
+  // Check if recipient ATA exists, create if needed
+  try {
+    await getAccount(connection, toAta);
+  } catch {
+    transaction.add(
+      createAssociatedTokenAccountInstruction(fromPubkey, toAta, toPubkey, mint)
+    );
+  }
+  
+  // Transfer NFT (amount = 1 for NFTs)
+  transaction.add(
+    createTransferInstruction(
+      fromAta,
+      toAta,
+      fromPubkey,
+      BigInt(1), // NFT amount is always 1
+      [],
+      TOKEN_PROGRAM_ID
+    )
+  );
+  
+  // Transfer SOL fee to fee wallet
+  transaction.add(
+    SystemProgram.transfer({
+      fromPubkey,
+      toPubkey: feePubkey,
+      lamports: solToLamports(feeSol),
+    })
+  );
+  
+  const signature = await transact(async (wallet: Web3MobileWallet) => {
+    await wallet.authorize({
+      cluster: getSolanaNetwork(),
+      identity: APP_IDENTITY,
+    });
+    
+    const signedTxs = await wallet.signAndSendTransactions({
+      transactions: [transaction],
+    });
+    
+    return signedTxs[0];
+  });
+  
+  return signature;
+};
+
+// Get NFT info (basic check if account exists and has supply=1)
+export const getNftInfo = async (mintAddress: string): Promise<{ exists: boolean; name?: string }> => {
+  try {
+    const connection = getConnection();
+    const mintInfo = await connection.getParsedAccountInfo(new PublicKey(mintAddress));
+    const data = mintInfo.value?.data;
+    
+    if (data && typeof data === 'object' && 'parsed' in data) {
+      const info = data.parsed?.info;
+      // NFTs typically have supply of 1 and decimals of 0
+      if (info?.supply === '1' && info?.decimals === 0) {
+        return { exists: true };
+      }
+    }
+    return { exists: false };
+  } catch {
+    return { exists: false };
+  }
+};
+
+// Check if wallet owns an NFT
+export const ownsNft = async (walletAddress: string, nftMint: string): Promise<boolean> => {
+  try {
+    const connection = getConnection();
+    const mint = new PublicKey(nftMint);
+    const owner = new PublicKey(walletAddress);
+    const ata = await getAssociatedTokenAddress(mint, owner);
+    const account = await getAccount(connection, ata);
+    return Number(account.amount) === 1;
+  } catch {
+    return false;
+  }
 };
 
 // Detect error type from MWA/Solana errors

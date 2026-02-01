@@ -112,38 +112,63 @@ Test on: **Solana Seeker (Android)**
 - [ ] Tapping "Batch Payout" navigates to batch screen
 - [ ] Header shows "Batch Payout" title
 
-### 7.2 Asset Selection
+### 7.2 Mode Selection
+- [ ] Can toggle between TOKEN and NFT modes
+- [ ] Switching modes clears current rows
+- [ ] Token mode shows asset selection (SOL/USDC/CUSTOM)
+- [ ] NFT mode hides asset selection
+
+### 7.3 Token Batch - Asset Selection
 - [ ] Can toggle between SOL, USDC, CUSTOM
 - [ ] Balance updates when switching assets
 - [ ] Custom mint input appears for CUSTOM
 - [ ] Invalid mint address shows error
 
-### 7.3 Input Methods
-- [ ] **Paste Input**: Enter multi-line `recipient,amount` format
+### 7.4 Input Methods
+
+#### 7.4.1 CSV Import
+- [ ] "Import CSV File" button opens file picker
+- [ ] Token CSV: `recipient,amount` format parsed correctly
+- [ ] NFT CSV: `recipient,nft_mint` format parsed correctly
+- [ ] Lines starting with # (comments) skipped
+- [ ] Invalid rows show validation errors
+
+#### 7.4.2 Paste Input
+- [ ] Enter multi-line text in paste area
 - [ ] "Parse & Add" button parses and adds rows
-- [ ] Invalid rows show validation errors (bad address, bad amount)
-- [ ] **Manual Add**: Enter recipient + amount, tap + button
+- [ ] Token format: `recipient,amount`
+- [ ] NFT format: `recipient,nft_mint`
+- [ ] Tab-separated also works
+
+#### 7.4.3 Manual Add
+- [ ] **Token**: Enter recipient + amount, tap + button
+- [ ] **NFT**: Enter recipient + NFT mint, tap + button
 - [ ] Rows appear in list below
 - [ ] Can remove individual rows with ✕ button
 - [ ] "Clear All" removes all rows
 
-### 7.4 Preflight Validation
+### 7.5 Preflight Validation
 - [ ] Invalid rows highlighted with red border
-- [ ] Validation errors shown per row
-- [ ] Summary shows: Total Amount, Total Fee, Total Cost
+- [ ] Validation errors shown per row:
+  - [ ] Missing recipient
+  - [ ] Invalid address
+  - [ ] Invalid amount (tokens)
+  - [ ] Missing/invalid NFT mint
+- [ ] Summary shows totals and fees
 - [ ] "Continue" button disabled if no valid rows
 
-### 7.5 Preview/Confirmation
+### 7.6 Preview/Confirmation
 - [ ] Preview shows all valid rows with status "queued"
-- [ ] Totals card shows amount + fee + total cost
-- [ ] Fee note shows fee wallet address (shortened)
+- [ ] **Token**: Shows amount + fee (2.5%) + total cost
+- [ ] **NFT**: Shows count + fee ({NFT_FEE_SOL} SOL each) + total fee
+- [ ] Fee wallet address shown (shortened)
 - [ ] Network fee estimate shown
 - [ ] Balance check displayed
 - [ ] Low SOL warning if needed
 - [ ] "Back" returns to input phase
 - [ ] "Send All" starts execution
 
-### 7.6 Execution
+### 7.7 Execution
 - [ ] Progress shows "X of Y"
 - [ ] Stats update: Done, Queued, Failed
 - [ ] "Stop" button stops after current tx
@@ -153,26 +178,48 @@ Test on: **Solana Seeker (Android)**
 - [ ] Confirmed rows show ✅
 - [ ] Failed rows show ❌ with error
 
-### 7.7 Fee Correctness
+### 7.8 Fee Correctness
+
+#### Token Batch
 - [ ] Each transaction contains TWO instructions:
-  - [ ] Transfer to recipient
-  - [ ] Transfer fee to fee wallet
-- [ ] Fee = 2.5% of payout amount
+  - [ ] Transfer tokens to recipient
+  - [ ] Transfer fee (2.5%) to fee wallet
 - [ ] Fee paid in same asset (SOL fee in SOL, token fee in token)
 - [ ] Verify on Solscan: single tx, 2 transfers
 
-### 7.8 Done Phase
-- [ ] Stats show final counts
+#### NFT Batch
+- [ ] Each transaction contains TWO instructions:
+  - [ ] Transfer NFT to recipient
+  - [ ] Transfer SOL fee to fee wallet
+- [ ] Fee = EXPO_PUBLIC_NFT_FEE_SOL (default 0.002 SOL)
+- [ ] Verify on Solscan: NFT transfer + SOL transfer
+
+### 7.9 Done Phase
+- [ ] Stats show final counts (Confirmed/Pending/Failed)
 - [ ] "Retry Failed" available if any failed
 - [ ] "Check" button on pending rows to verify status
-- [ ] "Done" returns to home
+- [ ] **Export Report**: "Copy Summary" copies text report
+- [ ] **Export Report**: "Share" opens share sheet
+- [ ] "Done" clears draft and returns to home
 
-### 7.9 Edge Cases
+### 7.10 Batch Resume/Recovery
+- [ ] Start batch, stop mid-execution, close app
+- [ ] Reopen app, navigate to Batch screen
+- [ ] "Incomplete Batch Found" prompt appears
+- [ ] "Continue" loads saved batch state
+- [ ] "Start Fresh" discards saved batch
+- [ ] Completed rows preserved (won't re-send)
+- [ ] Only queued/failed rows can be retried
+- [ ] Signatures preserved → status check only, no re-send
+
+### 7.11 Edge Cases
 - [ ] Double-send prevention: sending row can't be triggered again
 - [ ] Signature exists → retry only checks status, never resends
 - [ ] Stop mid-batch → remaining rows stay queued
 - [ ] Empty paste → nothing added
 - [ ] Duplicate recipients → allowed (user's choice)
+- [ ] Draft persists across app restarts
+- [ ] Different wallet → draft ignored (wallet mismatch)
 
 ## 8. Fee Enforcement
 - [ ] Pay link ALWAYS includes fee in transaction
