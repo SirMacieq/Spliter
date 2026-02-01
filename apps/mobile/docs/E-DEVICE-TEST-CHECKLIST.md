@@ -105,7 +105,76 @@ Test on: **Solana Seeker (Android)**
 
 ---
 
-## 7. Fee Enforcement
+## 7. Batch Payouts
+
+### 7.1 Navigation
+- [ ] Home screen shows "Tools" section with "Batch Payout" card
+- [ ] Tapping "Batch Payout" navigates to batch screen
+- [ ] Header shows "Batch Payout" title
+
+### 7.2 Asset Selection
+- [ ] Can toggle between SOL, USDC, CUSTOM
+- [ ] Balance updates when switching assets
+- [ ] Custom mint input appears for CUSTOM
+- [ ] Invalid mint address shows error
+
+### 7.3 Input Methods
+- [ ] **Paste Input**: Enter multi-line `recipient,amount` format
+- [ ] "Parse & Add" button parses and adds rows
+- [ ] Invalid rows show validation errors (bad address, bad amount)
+- [ ] **Manual Add**: Enter recipient + amount, tap + button
+- [ ] Rows appear in list below
+- [ ] Can remove individual rows with ✕ button
+- [ ] "Clear All" removes all rows
+
+### 7.4 Preflight Validation
+- [ ] Invalid rows highlighted with red border
+- [ ] Validation errors shown per row
+- [ ] Summary shows: Total Amount, Total Fee, Total Cost
+- [ ] "Continue" button disabled if no valid rows
+
+### 7.5 Preview/Confirmation
+- [ ] Preview shows all valid rows with status "queued"
+- [ ] Totals card shows amount + fee + total cost
+- [ ] Fee note shows fee wallet address (shortened)
+- [ ] Network fee estimate shown
+- [ ] Balance check displayed
+- [ ] Low SOL warning if needed
+- [ ] "Back" returns to input phase
+- [ ] "Send All" starts execution
+
+### 7.6 Execution
+- [ ] Progress shows "X of Y"
+- [ ] Stats update: Done, Queued, Failed
+- [ ] "Stop" button stops after current tx
+- [ ] Each row updates status: queued → sending → sent → confirmed/failed
+- [ ] Wallet approval requested per row
+- [ ] If cancelled, row stays queued (can retry)
+- [ ] Confirmed rows show ✅
+- [ ] Failed rows show ❌ with error
+
+### 7.7 Fee Correctness
+- [ ] Each transaction contains TWO instructions:
+  - [ ] Transfer to recipient
+  - [ ] Transfer fee to fee wallet
+- [ ] Fee = 2.5% of payout amount
+- [ ] Fee paid in same asset (SOL fee in SOL, token fee in token)
+- [ ] Verify on Solscan: single tx, 2 transfers
+
+### 7.8 Done Phase
+- [ ] Stats show final counts
+- [ ] "Retry Failed" available if any failed
+- [ ] "Check" button on pending rows to verify status
+- [ ] "Done" returns to home
+
+### 7.9 Edge Cases
+- [ ] Double-send prevention: sending row can't be triggered again
+- [ ] Signature exists → retry only checks status, never resends
+- [ ] Stop mid-batch → remaining rows stay queued
+- [ ] Empty paste → nothing added
+- [ ] Duplicate recipients → allowed (user's choice)
+
+## 8. Fee Enforcement
 - [ ] Pay link ALWAYS includes fee in transaction
 - [ ] Direct settle (group/settle) does NOT include fee (existing behavior)
 

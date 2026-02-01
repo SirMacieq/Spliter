@@ -164,6 +164,12 @@ function RootLayoutNav() {
           }} 
         />
         <Stack.Screen 
+          name="tools/batch" 
+          options={{ 
+            title: 'Batch Payout',
+          }} 
+        />
+        <Stack.Screen 
           name="group/request" 
           options={{ 
             title: 'Request Payment',

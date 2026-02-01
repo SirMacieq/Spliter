@@ -67,16 +67,44 @@ export default function HomeScreen() {
     />
   );
   
+  const handleBatchPayout = () => {
+    router.push('/tools/batch' as any);
+  };
+
   const renderHeader = () => (
-    <View style={styles.walletCard}>
-      <View style={styles.walletInfo}>
-        <Text style={styles.walletLabel}>Connected Wallet</Text>
-        <Text style={styles.walletAddress}>
-          {publicKey ? `${publicKey.slice(0, 6)}···${publicKey.slice(-4)}` : 'Not connected'}
-        </Text>
+    <>
+      <View style={styles.walletCard}>
+        <View style={styles.walletInfo}>
+          <Text style={styles.walletLabel}>Connected Wallet</Text>
+          <Text style={styles.walletAddress}>
+            {publicKey ? `${publicKey.slice(0, 6)}···${publicKey.slice(-4)}` : 'Not connected'}
+          </Text>
+        </View>
+        <NetworkBadge />
       </View>
-      <NetworkBadge />
-    </View>
+      
+      {/* Tools Section */}
+      <View style={styles.toolsSection}>
+        <Text style={styles.toolsSectionTitle}>Tools</Text>
+        <Card style={styles.toolCard} onPress={handleBatchPayout}>
+          <View style={styles.toolContent}>
+            <View style={styles.toolIcon}>
+              <Text style={styles.toolIconText}>📦</Text>
+            </View>
+            <View style={styles.toolInfo}>
+              <Text style={styles.toolName}>Batch Payout</Text>
+              <Text style={styles.toolDesc}>Send to multiple recipients</Text>
+            </View>
+            <Text style={styles.toolArrow}>›</Text>
+          </View>
+        </Card>
+      </View>
+      
+      {/* Groups Section Title */}
+      {groups.length > 0 && (
+        <Text style={styles.sectionTitle}>Groups</Text>
+      )}
+    </>
   );
   
   return (
@@ -216,6 +244,63 @@ const styles = StyleSheet.create({
     fontWeight: '300',
   },
   
+  // Tools Section
+  toolsSection: {
+    marginBottom: SPACING['2xl'],
+  },
+  toolsSectionTitle: {
+    ...TYPOGRAPHY.captionMedium,
+    color: COLORS.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: SPACING.md,
+  },
+  toolCard: {
+    padding: SPACING.lg,
+  },
+  toolContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  toolIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.surfaceLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: SPACING.md,
+  },
+  toolIconText: {
+    fontSize: 20,
+  },
+  toolInfo: {
+    flex: 1,
+  },
+  toolName: {
+    ...TYPOGRAPHY.bodyMedium,
+    color: COLORS.text,
+    marginBottom: SPACING.xs,
+  },
+  toolDesc: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textSecondary,
+  },
+  toolArrow: {
+    fontSize: 24,
+    color: COLORS.textMuted,
+    fontWeight: '300',
+  },
+  
+  // Section Title
+  sectionTitle: {
+    ...TYPOGRAPHY.captionMedium,
+    color: COLORS.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: SPACING.md,
+  },
+
   // FAB
   fab: {
     position: 'absolute',

@@ -497,6 +497,139 @@ export const sendUsdcTransferWithFee = async (
   return signature;
 };
 
+// ============================================
+// Generic SPL Token transfer with fee (for batch payouts)
+// ============================================
+
+// Get token decimals
+export const getTokenDecimals = async (mintAddress: string): Promise<number> => {
+  // USDC shortcut
+  if (mintAddress === getCurrentUsdcMint()) {
+    return USDC_DECIMALS;
+  }
+  
+  try {
+    const connection = getConnection();
+    const mintInfo = await connection.getParsedAccountInfo(new PublicKey(mintAddress));
+    const data = mintInfo.value?.data;
+    if (data && typeof data === 'object' && 'parsed' in data) {
+      return data.parsed?.info?.decimals ?? 9;
+    }
+    return 9; // Default
+  } catch {
+    return 9;
+  }
+};
+
+// Convert token amount to smallest unit
+export const tokenToSmallestUnit = (amount: number, decimals: number): bigint => {
+  return BigInt(Math.round(amount * Math.pow(10, decimals)));
+};
+
+// Get token balance
+export const getTokenBalance = async (publicKey: string, mintAddress: string): Promise<number> => {
+  try {
+    return await withRpcFallback(async (connection) => {
+      const mint = new PublicKey(mintAddress);
+      const owner = new PublicKey(publicKey);
+      const ata = await getAssociatedTokenAddress(mint, owner);
+      const account = await getAccount(connection, ata);
+      const decimals = await getTokenDecimals(mintAddress);
+      return Number(account.amount) / Math.pow(10, decimals);
+    });
+  } catch {
+    return 0;
+  }
+};
+
+// Send generic SPL token transfer WITH fee
+export const sendSplTokenTransferWithFee = async (
+  fromWallet: string,
+  toWallet: string,
+  mintAddress: string,
+  recipientAmount: number,
+  feeAmount: number,
+  decimals: number,
+): Promise<string> => {
+  if (!isFeeConfigured()) {
+    throw new Error('Fee wallet not configured');
+  }
+
+  const connection = getConnection();
+  const mint = new PublicKey(mintAddress);
+  const fromPubkey = new PublicKey(fromWallet);
+  const toPubkey = new PublicKey(toWallet);
+  const feePubkey = new PublicKey(FEE_WALLET);
+  
+  const fromAta = await getAssociatedTokenAddress(mint, fromPubkey);
+  const toAta = await getAssociatedTokenAddress(mint, toPubkey);
+  const feeAta = await getAssociatedTokenAddress(mint, feePubkey);
+  
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+  const transaction = new Transaction({
+    feePayer: fromPubkey,
+    blockhash,
+    lastValidBlockHeight,
+  });
+  
+  // Check if recipient ATA exists, create if needed
+  try {
+    await getAccount(connection, toAta);
+  } catch {
+    transaction.add(
+      createAssociatedTokenAccountInstruction(fromPubkey, toAta, toPubkey, mint)
+    );
+  }
+  
+  // Check if fee wallet ATA exists, create if needed
+  try {
+    await getAccount(connection, feeAta);
+  } catch {
+    transaction.add(
+      createAssociatedTokenAccountInstruction(fromPubkey, feeAta, feePubkey, mint)
+    );
+  }
+  
+  // Transfer to recipient
+  transaction.add(
+    createTransferInstruction(
+      fromAta,
+      toAta,
+      fromPubkey,
+      tokenToSmallestUnit(recipientAmount, decimals),
+      [],
+      TOKEN_PROGRAM_ID
+    )
+  );
+  
+  // Transfer fee
+  transaction.add(
+    createTransferInstruction(
+      fromAta,
+      feeAta,
+      fromPubkey,
+      tokenToSmallestUnit(feeAmount, decimals),
+      [],
+      TOKEN_PROGRAM_ID
+    )
+  );
+  
+  const signature = await transact(async (wallet: Web3MobileWallet) => {
+    await wallet.authorize({
+      cluster: getSolanaNetwork(),
+      identity: APP_IDENTITY,
+    });
+    
+    const signedTxs = await wallet.signAndSendTransactions({
+      transactions: [transaction],
+    });
+    
+    return signedTxs[0];
+  });
+  
+  return signature;
+};
+
 // Detect error type from MWA/Solana errors
 export const categorizeError = (error: any): { type: 'rejected' | 'network' | 'fee' | 'balance' | 'timeout' | 'general'; message: string } => {
   const raw = String(error?.message ?? error ?? '');
