@@ -52,6 +52,25 @@ export const MIN_SOL_FOR_FEES = 0.005;
 // Transaction timeout (30 seconds)
 export const TX_CONFIRMATION_TIMEOUT = 30000;
 
+// ============================================
+// Fee Configuration (Pay Link)
+// ============================================
+export const FEE_BPS = parseInt(process.env.EXPO_PUBLIC_FEE_BPS || '250', 10); // 2.5% default
+export const FEE_WALLET = process.env.EXPO_PUBLIC_FEE_WALLET || '';
+export const FEE_PERCENT = FEE_BPS / 100; // For display (e.g., 2.5)
+
+// Fee calculation helpers
+export const calculateFee = (amount: number): number => {
+  return (amount * FEE_BPS) / 10000;
+};
+
+export const isFeeConfigured = (): boolean => {
+  return !!FEE_WALLET && FEE_WALLET.length >= 32;
+};
+
+// Deep link scheme
+export const APP_SCHEME = 'spliter';
+
 // Colors
 export const COLORS = {
   primary: '#9945FF', // Solana purple

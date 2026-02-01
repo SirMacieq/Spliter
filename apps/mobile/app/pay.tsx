@@ -1,24 +1,8 @@
-/**
- * TODO: Fee Model Bypass
- * 
- * This settle screen does NOT include the fee model that's used in Pay links.
- * Direct settlements (in-group) currently bypass fees.
- * 
- * Decision: Keep existing behavior for now (group settlements are fee-free).
- * If fees should apply to all transfers, refactor to use sendUsdcTransferWithFee/sendSolTransferWithFee.
- * 
- * @see /app/pay.tsx for fee-enabled payment flow
- * @see /lib/solana.ts for sendXxxTransferWithFee functions
- */
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   View, 
   Text, 
   StyleSheet, 
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   TouchableOpacity,
   Linking,
@@ -26,40 +10,54 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { useGroupStore } from '../../stores/groupStore';
-import { useWalletPublicKey } from '../../stores/walletStore';
-import { Button, Card, NetworkBadge } from '../../components';
-import { COLORS, SPACING, TYPOGRAPHY, RADIUS, MIN_SOL_FOR_FEES, getFaucetUrl, getNetworkName } from '../../lib/constants';
+import { useWalletPublicKey, useIsConnected } from '../stores/walletStore';
+import { useGroupStore } from '../stores/groupStore';
+import { Button, Card, NetworkBadge } from '../components';
 import { 
-  sendUsdcTransfer,
-  sendSolTransfer,
+  COLORS, 
+  SPACING, 
+  TYPOGRAPHY, 
+  RADIUS, 
+  MIN_SOL_FOR_FEES, 
+  getFaucetUrl, 
+  getNetworkName,
+  FEE_PERCENT,
+  FEE_WALLET,
+  calculateFee,
+  isFeeConfigured,
+} from '../lib/constants';
+import { 
+  sendUsdcTransferWithFee,
+  sendSolTransferWithFee,
   waitForConfirmation,
   checkTransactionStatus,
   getUsdcBalance, 
   getSolBalance,
   getExplorerUrl,
   categorizeError,
-} from '../../lib/solana';
-import { SettleStatus, SettleErrorType } from '../../lib/types';
+} from '../lib/solana';
+import { validatePayLinkParams, PayLinkParams, shortenAddress } from '../lib/validation';
+import { SettleStatus, SettleErrorType } from '../lib/types';
 
-type Currency = 'USDC' | 'SOL';
-
-export default function SettleScreen() {
+export default function PayScreen() {
   const router = useRouter();
-  const { groupId, to, amount: initialAmount } = useLocalSearchParams<{ 
-    groupId: string; 
-    to: string;
-    amount: string;
+  const rawParams = useLocalSearchParams<{ 
+    to?: string; 
+    amount?: string;
+    currency?: string;
+    groupId?: string;
+    note?: string;
   }>();
   
-  const group = useGroupStore((state) => state.getGroupById(groupId || ''));
-  const addSettlement = useGroupStore((state) => state.addSettlement);
+  const publicKey = useWalletPublicKey();
+  const isConnected = useIsConnected();
   const addTxHistory = useGroupStore((state) => state.addTxHistory);
   const updateTxStatus = useGroupStore((state) => state.updateTxStatus);
-  const publicKey = useWalletPublicKey();
   
-  const [amount, setAmount] = useState(initialAmount || '');
-  const [currency, setCurrency] = useState<Currency>('USDC');
+  // Validate params
+  const validation = validatePayLinkParams(rawParams);
+  const params = validation.params;
+  
   const [status, setStatus] = useState<SettleStatus>('idle');
   const [error, setError] = useState('');
   const [errorType, setErrorType] = useState<SettleErrorType | null>(null);
@@ -71,13 +69,13 @@ export default function SettleScreen() {
   
   const isSendingRef = useRef(false);
   
-  const recipient = group?.members.find(m => m.wallet === to);
-  const recipientDisplay = recipient?.nickname || 
-    (to ? `${to.slice(0, 6)}···${to.slice(-4)}` : 'Unknown');
-  
   const networkName = getNetworkName();
   const faucetUrl = getFaucetUrl();
-  const parsedAmount = parseFloat(amount) || 0;
+  const feeConfigured = isFeeConfigured();
+  
+  // Fee calculations
+  const feeAmount = params ? calculateFee(params.amount) : 0;
+  const totalAmount = params ? params.amount + feeAmount : 0;
   
   const loadBalances = useCallback(async () => {
     if (!publicKey) return;
@@ -95,62 +93,55 @@ export default function SettleScreen() {
       setSolBalance(sol);
       
       if (sol < MIN_SOL_FOR_FEES) {
-        setError(`You need about ${MIN_SOL_FOR_FEES} SOL to cover transaction fees`);
+        setError(`You need about ${MIN_SOL_FOR_FEES} SOL for network fees`);
         setErrorType('fee');
       }
     } catch (err) {
       console.error('Failed to load balances:', err);
-      setError('Unable to load balances. Please check your connection.');
+      setError('Unable to load balances. Check your connection.');
       setErrorType('network');
     }
     setStatus('idle');
   }, [publicKey]);
   
   useEffect(() => {
-    loadBalances();
-  }, [loadBalances]);
-  
-  const handleAmountChange = (text: string) => {
-    const cleaned = text.replace(/[^0-9.]/g, '');
-    const parts = cleaned.split('.');
-    if (parts.length > 2) return;
-    if (currency === 'USDC' && parts[1]?.length > 2) return;
-    if (currency === 'SOL' && parts[1]?.length > 9) return;
-    setAmount(cleaned);
-    setError('');
-    setErrorType(null);
-  };
-  
-  const validateAmount = (): boolean => {
-    if (solBalance !== null && solBalance < MIN_SOL_FOR_FEES) {
-      setError(`You need about ${MIN_SOL_FOR_FEES} SOL for transaction fees`);
-      setErrorType('fee');
-      return false;
+    if (isConnected && params) {
+      loadBalances();
     }
-    
-    if (parsedAmount <= 0) {
-      setError('Please enter an amount greater than zero');
+  }, [loadBalances, isConnected, params]);
+  
+  const validatePayment = (): boolean => {
+    if (!feeConfigured) {
+      setError('Fee wallet not configured. Please contact support.');
       setErrorType('general');
       return false;
     }
     
-    if (currency === 'USDC') {
+    if (solBalance !== null && solBalance < MIN_SOL_FOR_FEES) {
+      setError(`You need about ${MIN_SOL_FOR_FEES} SOL for network fees`);
+      setErrorType('fee');
+      return false;
+    }
+    
+    if (!params) return false;
+    
+    if (params.currency === 'USDC') {
       if (usdcBalance === null || usdcBalance === 0) {
-        setError('You don\'t have any USDC to send');
+        setError('You don\'t have any USDC');
         setErrorType('balance');
         return false;
       }
-      if (parsedAmount > usdcBalance) {
-        setError(`You only have $${usdcBalance.toFixed(2)} USDC available`);
+      if (totalAmount > usdcBalance) {
+        setError(`Insufficient USDC. Need $${totalAmount.toFixed(2)}, have $${usdcBalance.toFixed(2)}`);
         setErrorType('balance');
         return false;
       }
     }
     
-    if (currency === 'SOL') {
+    if (params.currency === 'SOL') {
       const maxSendable = (solBalance ?? 0) - MIN_SOL_FOR_FEES;
-      if (parsedAmount > maxSendable) {
-        setError(`Maximum you can send: ${Math.max(0, maxSendable).toFixed(4)} SOL`);
+      if (totalAmount > maxSendable) {
+        setError(`Insufficient SOL. Max: ${Math.max(0, maxSendable).toFixed(4)} SOL`);
         setErrorType('balance');
         return false;
       }
@@ -164,7 +155,7 @@ export default function SettleScreen() {
   };
   
   const handleProceedToConfirm = () => {
-    if (!validateAmount()) return;
+    if (!validatePayment()) return;
     setStatus('confirming');
   };
   
@@ -174,8 +165,8 @@ export default function SettleScreen() {
       return;
     }
     
-    if (!publicKey || !to || !groupId) return;
-    if (!validateAmount()) {
+    if (!publicKey || !params) return;
+    if (!validatePayment()) {
       setStatus('idle');
       return;
     }
@@ -186,35 +177,26 @@ export default function SettleScreen() {
     setErrorType(null);
     
     try {
-      const signature = currency === 'USDC'
-        ? await sendUsdcTransfer(publicKey, to, parsedAmount)
-        : await sendSolTransfer(publicKey, to, parsedAmount);
+      const signature = params.currency === 'USDC'
+        ? await sendUsdcTransferWithFee(publicKey, params.to, params.amount, feeAmount)
+        : await sendSolTransferWithFee(publicKey, params.to, params.amount, feeAmount);
       
       setTxSignature(signature);
       
       await addTxHistory({
         signature,
         from: publicKey,
-        to,
-        amount: parsedAmount,
-        currency,
+        to: params.to,
+        amount: params.amount,
+        currency: params.currency,
         status: 'pending',
-        groupId,
+        groupId: params.groupId,
       });
       
       setStatus('pending');
       const result = await waitForConfirmation(signature);
       
       if (result.status === 'confirmed') {
-        await addSettlement({
-          groupId,
-          from: publicKey,
-          to,
-          amount: parsedAmount,
-          currency,
-          txSignature: signature,
-          status: 'confirmed',
-        });
         await updateTxStatus(signature, 'confirmed');
         setStatus('success');
       } else if (result.status === 'failed') {
@@ -223,11 +205,11 @@ export default function SettleScreen() {
         setErrorType('general');
         setStatus('error');
       } else {
-        setError('Taking longer than expected. You can check the status below.');
+        setError('Taking longer than expected. Check status below.');
         setErrorType('timeout');
       }
     } catch (err: any) {
-      console.error('Settlement error:', err);
+      console.error('Payment error:', err);
       const { type, message } = categorizeError(err);
       setError(message);
       setErrorType(type);
@@ -253,17 +235,6 @@ export default function SettleScreen() {
       const result = await checkTransactionStatus(txSignature);
       
       if (result.status === 'confirmed') {
-        if (publicKey && to && groupId) {
-          await addSettlement({
-            groupId,
-            from: publicKey,
-            to,
-            amount: parsedAmount,
-            currency,
-            txSignature,
-            status: 'confirmed',
-          });
-        }
         await updateTxStatus(txSignature, 'confirmed');
         setStatus('success');
       } else if (result.status === 'failed') {
@@ -272,7 +243,7 @@ export default function SettleScreen() {
         setErrorType('general');
         setStatus('error');
       } else {
-        setError('Still processing. Try again in a moment.');
+        setError('Still processing. Try again shortly.');
         setErrorType('timeout');
         setStatus('pending');
       }
@@ -306,27 +277,76 @@ export default function SettleScreen() {
     }
   };
   
-  const handleDone = () => router.back();
+  const handleClose = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/home');
+    }
+  };
+  
   const handleCancel = () => {
     setStatus('idle');
     setError('');
   };
   
-  if (!group || !to) {
+  // ========== INVALID PARAMS ==========
+  if (!validation.valid) {
     return (
-      <View style={styles.container}>
-        <View style={styles.centerContent}>
-          <Text style={styles.errorEmoji}>🔍</Text>
-          <Text style={styles.errorTitle}>Invalid Settlement</Text>
-          <Text style={styles.errorMessage}>Unable to find the payment details.</Text>
-          <Button title="Go Back" onPress={handleDone} variant="outline" />
+      <>
+        <Stack.Screen options={{ title: 'Invalid Link' }} />
+        <View style={styles.container}>
+          <View style={styles.centerContent}>
+            <Text style={styles.errorEmoji}>⚠️</Text>
+            <Text style={styles.errorTitle}>Invalid Payment Link</Text>
+            <Text style={styles.errorMessage}>{validation.error}</Text>
+            <Button title="Go Back" onPress={handleClose} variant="outline" />
+          </View>
         </View>
-      </View>
+      </>
+    );
+  }
+  
+  // ========== NOT CONNECTED ==========
+  if (!isConnected) {
+    return (
+      <>
+        <Stack.Screen options={{ title: 'Connect Wallet' }} />
+        <View style={styles.container}>
+          <View style={styles.centerContent}>
+            <Text style={styles.errorEmoji}>🔗</Text>
+            <Text style={styles.errorTitle}>Wallet Not Connected</Text>
+            <Text style={styles.errorMessage}>
+              Please connect your wallet to make this payment.
+            </Text>
+            <Button title="Go to Home" onPress={() => router.replace('/')} />
+          </View>
+        </View>
+      </>
+    );
+  }
+  
+  // ========== FEE NOT CONFIGURED ==========
+  if (!feeConfigured) {
+    return (
+      <>
+        <Stack.Screen options={{ title: 'Unavailable' }} />
+        <View style={styles.container}>
+          <View style={styles.centerContent}>
+            <Text style={styles.errorEmoji}>⚙️</Text>
+            <Text style={styles.errorTitle}>Pay Unavailable</Text>
+            <Text style={styles.errorMessage}>
+              Fee wallet not configured. Payments via link are temporarily unavailable.
+            </Text>
+            <Button title="Go Back" onPress={handleClose} variant="outline" />
+          </View>
+        </View>
+      </>
     );
   }
   
   // ========== SUCCESS SCREEN ==========
-  if (status === 'success' && txSignature) {
+  if (status === 'success' && txSignature && params) {
     return (
       <>
         <Stack.Screen options={{ title: 'Payment Sent' }} />
@@ -337,9 +357,18 @@ export default function SettleScreen() {
             </View>
             <Text style={styles.successTitle}>Payment Sent!</Text>
             <Text style={styles.successAmount}>
-              {currency === 'USDC' ? '$' : ''}{parsedAmount.toFixed(currency === 'USDC' ? 2 : 4)} {currency}
+              {params.currency === 'USDC' ? '$' : ''}{params.amount.toFixed(params.currency === 'USDC' ? 2 : 4)} {params.currency}
             </Text>
-            <Text style={styles.successRecipient}>to {recipientDisplay}</Text>
+            <Text style={styles.successRecipient}>
+              to {shortenAddress(params.to, 6)}
+            </Text>
+            
+            {params.note && (
+              <Card style={styles.noteCard}>
+                <Text style={styles.noteLabel}>Note</Text>
+                <Text style={styles.noteText}>{params.note}</Text>
+              </Card>
+            )}
             
             <Card style={styles.txCard}>
               <Text style={styles.txLabel}>Transaction ID</Text>
@@ -363,7 +392,7 @@ export default function SettleScreen() {
           </View>
           
           <View style={styles.footer}>
-            <Button title="Done" onPress={handleDone} size="large" fullWidth />
+            <Button title="Done" onPress={handleClose} size="large" fullWidth />
           </View>
         </View>
       </>
@@ -380,7 +409,7 @@ export default function SettleScreen() {
             <ActivityIndicator color={COLORS.warning} size="large" style={styles.spinner} />
             <Text style={styles.pendingTitle}>Processing Payment</Text>
             <Text style={styles.pendingMessage}>
-              Your payment has been sent and is being confirmed on the blockchain.
+              Your payment is being confirmed on the blockchain.
             </Text>
             
             <Card style={styles.txCard}>
@@ -408,7 +437,7 @@ export default function SettleScreen() {
             />
             <Button 
               title="Close" 
-              onPress={handleDone} 
+              onPress={handleClose} 
               variant="outline" 
               size="large"
               style={styles.flexButton}
@@ -457,7 +486,7 @@ export default function SettleScreen() {
             />
             <Button 
               title="Cancel" 
-              onPress={handleDone} 
+              onPress={handleClose} 
               variant="outline" 
               size="large"
               style={styles.flexButton}
@@ -484,42 +513,62 @@ export default function SettleScreen() {
   }
   
   // ========== CONFIRMATION SCREEN ==========
-  if (status === 'confirming' || status === 'signing') {
+  if ((status === 'confirming' || status === 'signing') && params) {
     return (
       <>
         <Stack.Screen options={{ title: 'Confirm Payment' }} />
         <View style={styles.container}>
           <ScrollView style={styles.scrollContent}>
             <View style={styles.confirmHeader}>
-              <Text style={styles.confirmTitle}>Review Payment</Text>
-              <Text style={styles.confirmSubtitle}>Please confirm the details below</Text>
+              <Text style={styles.confirmTitle}>Confirm Payment</Text>
+              <Text style={styles.confirmSubtitle}>Review the details below</Text>
             </View>
             
             <Card style={styles.confirmCard}>
-              <Text style={styles.confirmLabel}>Amount</Text>
+              <Text style={styles.confirmLabel}>Recipient Receives</Text>
               <Text style={styles.confirmAmount}>
-                {currency === 'USDC' ? '$' : ''}{parsedAmount.toFixed(currency === 'USDC' ? 2 : 4)} {currency}
+                {params.currency === 'USDC' ? '$' : ''}{params.amount.toFixed(params.currency === 'USDC' ? 2 : 4)} {params.currency}
               </Text>
             </Card>
             
             <Card style={styles.confirmCard}>
               <Text style={styles.confirmLabel}>Recipient</Text>
-              <Text style={styles.confirmValue}>{recipientDisplay}</Text>
-              <Text style={styles.confirmAddress}>{to}</Text>
+              <Text style={styles.confirmValue}>{shortenAddress(params.to, 8)}</Text>
+              <Text style={styles.confirmAddress}>{params.to}</Text>
             </Card>
             
-            <Card style={styles.confirmCard}>
-              <View style={styles.confirmRow}>
-                <View>
-                  <Text style={styles.confirmLabel}>Network</Text>
-                  <Text style={styles.confirmValue}>{networkName}</Text>
-                </View>
-                <View>
-                  <Text style={styles.confirmLabel}>Est. Fee</Text>
-                  <Text style={styles.confirmValue}>~0.00025 SOL</Text>
-                </View>
+            {params.note && (
+              <Card style={styles.confirmCard}>
+                <Text style={styles.confirmLabel}>Note</Text>
+                <Text style={styles.confirmValue}>{params.note}</Text>
+              </Card>
+            )}
+            
+            <Card style={StyleSheet.flatten([styles.confirmCard, styles.feeCard])}>
+              <View style={styles.feeRow}>
+                <Text style={styles.feeLabel}>Service Fee ({FEE_PERCENT}%)</Text>
+                <Text style={styles.feeValue}>
+                  {params.currency === 'USDC' ? '$' : ''}{feeAmount.toFixed(params.currency === 'USDC' ? 2 : 6)} {params.currency}
+                </Text>
+              </View>
+              <Text style={styles.feeNote}>
+                Fee goes to: {shortenAddress(FEE_WALLET, 4)}
+              </Text>
+            </Card>
+            
+            <Card style={styles.totalCard}>
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>You Pay (+ network fees)</Text>
+                <Text style={styles.totalValue}>
+                  {params.currency === 'USDC' ? '$' : ''}{totalAmount.toFixed(params.currency === 'USDC' ? 2 : 4)} {params.currency}
+                </Text>
               </View>
             </Card>
+            
+            <View style={styles.networkRow}>
+              <Text style={styles.networkLabel}>Network</Text>
+              <NetworkBadge />
+            </View>
             
             {error && (
               <View style={styles.errorBanner}>
@@ -545,7 +594,7 @@ export default function SettleScreen() {
               disabled={status === 'signing'}
             />
             <Button 
-              title={status === 'signing' ? 'Sending...' : 'Send Payment'} 
+              title={status === 'signing' ? 'Sending...' : 'Pay Now'} 
               onPress={handleSendTransaction} 
               size="large"
               style={styles.flexButton}
@@ -558,44 +607,71 @@ export default function SettleScreen() {
     );
   }
   
-  // ========== MAIN FORM ==========
+  // ========== MAIN SCREEN ==========
+  // At this point params must be valid (we returned early for invalid)
+  if (!params) {
+    return null; // TypeScript guard - should never reach here
+  }
+  
   return (
     <>
-      <Stack.Screen options={{ title: 'Settle Up' }} />
-      <KeyboardAvoidingView 
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+      <Stack.Screen options={{ title: 'Payment Request' }} />
+      <View style={styles.container}>
         <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {/* Recipient */}
-          <Card style={styles.recipientCard}>
-            <Text style={styles.recipientLabel}>Paying</Text>
-            <Text style={styles.recipientName}>{recipientDisplay}</Text>
-            <Text style={styles.recipientAddress}>
-              {to?.slice(0, 8)}···{to?.slice(-8)}
+          {/* Header */}
+          <View style={styles.requestHeader}>
+            <Text style={styles.requestEmoji}>💸</Text>
+            <Text style={styles.requestTitle}>Payment Request</Text>
+          </View>
+          
+          {/* Amount */}
+          <Card style={styles.amountCard}>
+            <Text style={styles.amountLabel}>Amount Requested</Text>
+            <Text style={styles.amountValue}>
+              {params.currency === 'USDC' ? '$' : ''}{params.amount.toFixed(params.currency === 'USDC' ? 2 : 4)}
             </Text>
-            <NetworkBadge style={styles.recipientBadge} />
+            <Text style={styles.amountCurrency}>{params.currency}</Text>
           </Card>
           
-          {/* Currency Toggle */}
-          <View style={styles.currencyToggle}>
-            <TouchableOpacity
-              style={[styles.currencyOption, currency === 'USDC' && styles.currencyOptionActive]}
-              onPress={() => setCurrency('USDC')}
-            >
-              <Text style={[styles.currencyText, currency === 'USDC' && styles.currencyTextActive]}>
-                USDC
+          {/* Recipient */}
+          <Card style={styles.detailCard}>
+            <Text style={styles.detailLabel}>To</Text>
+            <Text style={styles.detailValue}>{shortenAddress(params.to, 8)}</Text>
+            <Text style={styles.detailAddress}>{params.to}</Text>
+          </Card>
+          
+          {/* Note */}
+          {params.note && (
+            <Card style={styles.detailCard}>
+              <Text style={styles.detailLabel}>Note</Text>
+              <Text style={styles.detailValue}>{params.note}</Text>
+            </Card>
+          )}
+          
+          {/* Fee Info */}
+          <Card style={styles.feeInfoCard}>
+            <Text style={styles.feeInfoTitle}>Fee Breakdown</Text>
+            <View style={styles.feeInfoRow}>
+              <Text style={styles.feeInfoLabel}>Recipient gets</Text>
+              <Text style={styles.feeInfoValue}>
+                {params.currency === 'USDC' ? '$' : ''}{params.amount.toFixed(params.currency === 'USDC' ? 2 : 4)} {params.currency}
               </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.currencyOption, currency === 'SOL' && styles.currencyOptionActive]}
-              onPress={() => setCurrency('SOL')}
-            >
-              <Text style={[styles.currencyText, currency === 'SOL' && styles.currencyTextActive]}>
-                SOL
+            </View>
+            <View style={styles.feeInfoRow}>
+              <Text style={styles.feeInfoLabel}>Service fee ({FEE_PERCENT}%)</Text>
+              <Text style={styles.feeInfoValue}>
+                {params.currency === 'USDC' ? '$' : ''}{feeAmount.toFixed(params.currency === 'USDC' ? 2 : 6)} {params.currency}
               </Text>
-            </TouchableOpacity>
-          </View>
+            </View>
+            <View style={styles.feeInfoDivider} />
+            <View style={styles.feeInfoRow}>
+              <Text style={styles.feeInfoLabelBold}>You pay</Text>
+              <Text style={styles.feeInfoValueBold}>
+                {params.currency === 'USDC' ? '$' : ''}{totalAmount.toFixed(params.currency === 'USDC' ? 2 : 4)} {params.currency}
+              </Text>
+            </View>
+            <Text style={styles.feeInfoNote}>+ network fees (~0.00025 SOL)</Text>
+          </Card>
           
           {/* Balance */}
           <View style={styles.balanceRow}>
@@ -604,7 +680,7 @@ export default function SettleScreen() {
             ) : (
               <>
                 <Text style={styles.balanceText}>
-                  Balance: {currency === 'USDC' 
+                  Your Balance: {params.currency === 'USDC' 
                     ? `$${(usdcBalance ?? 0).toFixed(2)}`
                     : `${(solBalance ?? 0).toFixed(4)} SOL`
                   }
@@ -616,11 +692,11 @@ export default function SettleScreen() {
             )}
           </View>
           
-          {/* Fee Warning */}
+          {/* Low SOL Warning */}
           {solBalance !== null && solBalance < MIN_SOL_FOR_FEES && (
             <View style={styles.warningBanner}>
               <Text style={styles.warningBannerText}>
-                ⚠️ Low SOL balance! You need about {MIN_SOL_FOR_FEES} SOL for fees.
+                ⚠️ Low SOL! You need ~{MIN_SOL_FOR_FEES} SOL for fees.
               </Text>
               {faucetUrl && (
                 <TouchableOpacity onPress={handleOpenFaucet}>
@@ -630,64 +706,23 @@ export default function SettleScreen() {
             </View>
           )}
           
-          {/* Amount Input */}
-          <View style={styles.amountSection}>
-            <View style={styles.amountInputRow}>
-              {currency === 'USDC' && <Text style={styles.amountSymbol}>$</Text>}
-              <TextInput
-                style={styles.amountInput}
-                value={amount}
-                onChangeText={handleAmountChange}
-                placeholder="0.00"
-                placeholderTextColor={COLORS.textMuted}
-                keyboardType="decimal-pad"
-              />
-              <Text style={styles.amountCurrency}>{currency}</Text>
-            </View>
-          </View>
-          
-          {/* Quick Amounts */}
-          {currency === 'USDC' && (
-            <View style={styles.quickAmounts}>
-              {['5', '10', '25', '50'].map((qa) => (
-                <TouchableOpacity
-                  key={qa}
-                  style={styles.quickAmountButton}
-                  onPress={() => setAmount(qa)}
-                >
-                  <Text style={styles.quickAmountText}>${qa}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-          
-          {/* Max Button for SOL */}
-          {currency === 'SOL' && solBalance !== null && solBalance > MIN_SOL_FOR_FEES && (
-            <TouchableOpacity 
-              style={styles.maxButton}
-              onPress={() => setAmount(Math.max(0, solBalance - MIN_SOL_FOR_FEES).toFixed(4))}
-            >
-              <Text style={styles.maxButtonText}>
-                Use Max ({(solBalance - MIN_SOL_FOR_FEES).toFixed(4)} SOL)
-              </Text>
-            </TouchableOpacity>
-          )}
-          
           {error && errorType !== 'fee' && (
             <Text style={styles.formError}>{error}</Text>
           )}
+          
+          <NetworkBadge style={styles.networkBadgeCenter} />
         </ScrollView>
         
         <View style={styles.footer}>
           <Button
-            title="Continue"
+            title="Continue to Pay"
             onPress={handleProceedToConfirm}
-            disabled={parsedAmount <= 0 || (solBalance !== null && solBalance < MIN_SOL_FOR_FEES)}
+            disabled={status === 'loading-balance' || (solBalance !== null && solBalance < MIN_SOL_FOR_FEES)}
             size="large"
             fullWidth
           />
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </>
   );
 }
@@ -708,55 +743,104 @@ const styles = StyleSheet.create({
     padding: SPACING.xl,
   },
   
-  // Recipient Card
-  recipientCard: { 
-    alignItems: 'center', 
+  // Request Header
+  requestHeader: {
+    alignItems: 'center',
     marginBottom: SPACING['2xl'],
-    paddingVertical: SPACING['2xl'],
   },
-  recipientLabel: { 
-    ...TYPOGRAPHY.small,
-    color: COLORS.textSecondary, 
-    marginBottom: SPACING.sm,
-  },
-  recipientName: { 
-    ...TYPOGRAPHY.h2,
-    color: COLORS.text, 
-    marginBottom: SPACING.xs,
-  },
-  recipientAddress: { 
-    ...TYPOGRAPHY.caption,
-    color: COLORS.textMuted, 
-    fontFamily: 'monospace',
+  requestEmoji: {
+    fontSize: 48,
     marginBottom: SPACING.md,
   },
-  recipientBadge: {
-    marginTop: SPACING.sm,
+  requestTitle: {
+    ...TYPOGRAPHY.h2,
+    color: COLORS.text,
   },
   
-  // Currency Toggle
-  currencyToggle: { 
-    flexDirection: 'row', 
-    backgroundColor: COLORS.surface, 
-    borderRadius: RADIUS.md, 
-    padding: SPACING.xs, 
+  // Amount Card
+  amountCard: {
+    alignItems: 'center',
+    paddingVertical: SPACING['2xl'],
     marginBottom: SPACING.lg,
   },
-  currencyOption: { 
-    flex: 1, 
-    paddingVertical: SPACING.md, 
-    alignItems: 'center', 
-    borderRadius: RADIUS.sm,
+  amountLabel: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.sm,
   },
-  currencyOptionActive: { 
-    backgroundColor: COLORS.primary,
+  amountValue: {
+    fontSize: 40,
+    fontWeight: '700',
+    color: COLORS.text,
   },
-  currencyText: { 
+  amountCurrency: {
+    ...TYPOGRAPHY.body,
+    color: COLORS.textMuted,
+    marginTop: SPACING.xs,
+  },
+  
+  // Detail Card
+  detailCard: {
+    marginBottom: SPACING.md,
+  },
+  detailLabel: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.xs,
+  },
+  detailValue: {
     ...TYPOGRAPHY.bodyMedium,
+    color: COLORS.text,
+  },
+  detailAddress: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textMuted,
+    fontFamily: 'monospace',
+    marginTop: SPACING.xs,
+  },
+  
+  // Fee Info Card
+  feeInfoCard: {
+    marginTop: SPACING.lg,
+    marginBottom: SPACING.lg,
+    backgroundColor: COLORS.surfaceLight,
+  },
+  feeInfoTitle: {
+    ...TYPOGRAPHY.smallMedium,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.md,
+  },
+  feeInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: SPACING.sm,
+  },
+  feeInfoLabel: {
+    ...TYPOGRAPHY.small,
     color: COLORS.textSecondary,
   },
-  currencyTextActive: { 
+  feeInfoValue: {
+    ...TYPOGRAPHY.small,
     color: COLORS.text,
+  },
+  feeInfoLabelBold: {
+    ...TYPOGRAPHY.bodyMedium,
+    color: COLORS.text,
+  },
+  feeInfoValueBold: {
+    ...TYPOGRAPHY.bodyMedium,
+    color: COLORS.primary,
+  },
+  feeInfoDivider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: SPACING.md,
+  },
+  feeInfoNote: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+    marginTop: SPACING.sm,
   },
   
   // Balance
@@ -776,7 +860,7 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
   },
   
-  // Warnings
+  // Warning
   warningBanner: { 
     backgroundColor: COLORS.warningMuted, 
     borderRadius: RADIUS.md, 
@@ -799,69 +883,16 @@ const styles = StyleSheet.create({
     marginTop: SPACING.md,
   },
   
-  // Amount Input
-  amountSection: {
-    marginBottom: SPACING.lg,
-  },
-  amountInputRow: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    backgroundColor: COLORS.surface, 
-    borderRadius: RADIUS.md, 
-    paddingHorizontal: SPACING.lg,
-  },
-  amountSymbol: { 
-    fontSize: 32, 
-    color: COLORS.textMuted, 
-    marginRight: SPACING.sm,
-    fontWeight: '300',
-  },
-  amountInput: { 
-    flex: 1, 
-    fontSize: 32, 
-    color: COLORS.text, 
-    paddingVertical: SPACING.lg,
-    fontWeight: '500',
-  },
-  amountCurrency: { 
-    ...TYPOGRAPHY.body,
-    color: COLORS.textMuted, 
-    marginLeft: SPACING.sm,
-  },
-  
-  // Quick Amounts
-  quickAmounts: { 
-    flexDirection: 'row', 
-    gap: SPACING.sm,
-    marginBottom: SPACING.lg,
-  },
-  quickAmountButton: { 
-    flex: 1, 
-    backgroundColor: COLORS.surface, 
-    borderRadius: RADIUS.sm, 
-    paddingVertical: SPACING.md, 
-    alignItems: 'center',
-  },
-  quickAmountText: { 
-    ...TYPOGRAPHY.smallMedium,
-    color: COLORS.text,
-  },
-  
-  // Max Button
-  maxButton: { 
-    alignItems: 'center',
-    marginBottom: SPACING.lg,
-  },
-  maxButtonText: { 
-    ...TYPOGRAPHY.smallMedium,
-    color: COLORS.primary,
-  },
-  
-  // Form Error
   formError: { 
     ...TYPOGRAPHY.small,
     color: COLORS.error, 
     textAlign: 'center',
+    marginBottom: SPACING.lg,
+  },
+  
+  networkBadgeCenter: {
+    alignSelf: 'center',
+    marginTop: SPACING.md,
   },
   
   // Footer
@@ -915,9 +946,58 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace', 
     marginTop: SPACING.xs,
   },
-  confirmRow: {
+  
+  // Fee Card
+  feeCard: {
+    backgroundColor: COLORS.surfaceLight,
+  },
+  feeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  feeLabel: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textSecondary,
+  },
+  feeValue: {
+    ...TYPOGRAPHY.smallMedium,
+    color: COLORS.text,
+  },
+  feeNote: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textMuted,
+    marginTop: SPACING.sm,
+  },
+  
+  // Total Card
+  totalCard: {
+    backgroundColor: COLORS.primaryMuted,
+    marginBottom: SPACING.lg,
+  },
+  totalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  totalLabel: {
+    ...TYPOGRAPHY.bodyMedium,
+    color: COLORS.text,
+  },
+  totalValue: {
+    ...TYPOGRAPHY.h3,
+    color: COLORS.primary,
+  },
+  
+  networkRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SPACING.lg,
+  },
+  networkLabel: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textSecondary,
   },
   
   // Error Banner
@@ -979,6 +1059,21 @@ const styles = StyleSheet.create({
     ...TYPOGRAPHY.body,
     color: COLORS.textSecondary, 
     marginBottom: SPACING['2xl'],
+  },
+  
+  // Note Card
+  noteCard: {
+    width: '100%',
+    marginBottom: SPACING.lg,
+  },
+  noteLabel: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.xs,
+  },
+  noteText: {
+    ...TYPOGRAPHY.body,
+    color: COLORS.text,
   },
   
   // Pending Screen

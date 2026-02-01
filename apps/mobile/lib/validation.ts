@@ -83,3 +83,101 @@ export const isSameAddress = (a: string, b: string): boolean => {
     return a === b;
   }
 };
+
+// ============================================
+// Pay Link Validation
+// ============================================
+
+export type PayLinkCurrency = 'SOL' | 'USDC';
+
+export interface PayLinkParams {
+  to: string;
+  amount: number;
+  currency: PayLinkCurrency;
+  groupId?: string;
+  note?: string;
+}
+
+export interface PayLinkValidationResult {
+  valid: boolean;
+  params?: PayLinkParams;
+  error?: string;
+}
+
+/**
+ * Validate and parse pay link query params
+ */
+export const validatePayLinkParams = (params: {
+  to?: string;
+  amount?: string;
+  currency?: string;
+  groupId?: string;
+  note?: string;
+}): PayLinkValidationResult => {
+  // Required: to (base58 pubkey)
+  if (!params.to) {
+    return { valid: false, error: 'Missing recipient address' };
+  }
+  if (!isValidSolanaAddress(params.to)) {
+    return { valid: false, error: 'Invalid recipient address' };
+  }
+
+  // Required: amount (positive decimal)
+  if (!params.amount) {
+    return { valid: false, error: 'Missing payment amount' };
+  }
+  const amount = parseFloat(params.amount);
+  if (isNaN(amount) || amount <= 0) {
+    return { valid: false, error: 'Invalid payment amount' };
+  }
+  if (amount > 1000000) {
+    return { valid: false, error: 'Amount exceeds maximum (1,000,000)' };
+  }
+
+  // Required: currency (SOL|USDC)
+  if (!params.currency) {
+    return { valid: false, error: 'Missing currency type' };
+  }
+  const currencyUpper = params.currency.toUpperCase();
+  if (currencyUpper !== 'SOL' && currencyUpper !== 'USDC') {
+    return { valid: false, error: 'Invalid currency (must be SOL or USDC)' };
+  }
+
+  // Optional: note (max 140 chars)
+  let note = params.note;
+  if (note && note.length > 140) {
+    note = note.slice(0, 140);
+  }
+
+  return {
+    valid: true,
+    params: {
+      to: params.to,
+      amount,
+      currency: currencyUpper as PayLinkCurrency,
+      groupId: params.groupId,
+      note,
+    },
+  };
+};
+
+/**
+ * Generate a pay link URL
+ */
+export const generatePayLink = (params: PayLinkParams): string => {
+  const base = 'spliter://pay';
+  const searchParams = new URLSearchParams();
+  
+  searchParams.set('to', params.to);
+  searchParams.set('amount', params.amount.toString());
+  searchParams.set('currency', params.currency);
+  
+  if (params.groupId) {
+    searchParams.set('groupId', params.groupId);
+  }
+  if (params.note) {
+    searchParams.set('note', params.note);
+  }
+  
+  return `${base}?${searchParams.toString()}`;
+};

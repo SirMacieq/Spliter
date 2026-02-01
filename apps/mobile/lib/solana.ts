@@ -26,6 +26,9 @@ import {
   APP_NAME,
   MIN_SOL_FOR_FEES,
   TX_CONFIRMATION_TIMEOUT,
+  FEE_WALLET,
+  calculateFee,
+  isFeeConfigured,
 } from './constants';
 
 const APP_IDENTITY = {
@@ -336,6 +339,162 @@ export const getAccountExplorerUrl = (address: string): string => {
 export const hasEnoughSolForFees = async (publicKey: string): Promise<boolean> => {
   const balance = await getSolBalance(publicKey);
   return balance >= MIN_SOL_FOR_FEES;
+};
+
+// ============================================
+// Fee-aware transfers (for Pay Link flow)
+// ============================================
+
+// Send SOL transfer WITH fee (two transfers in one transaction)
+export const sendSolTransferWithFee = async (
+  fromWallet: string,
+  toWallet: string,
+  recipientAmount: number, // Amount recipient receives
+  feeAmount: number,       // Fee amount
+): Promise<string> => {
+  if (!isFeeConfigured()) {
+    throw new Error('Fee wallet not configured');
+  }
+
+  const connection = getConnection();
+  const fromPubkey = new PublicKey(fromWallet);
+  const toPubkey = new PublicKey(toWallet);
+  const feePubkey = new PublicKey(FEE_WALLET);
+  
+  // Transfer to recipient
+  const transferToRecipient = SystemProgram.transfer({
+    fromPubkey,
+    toPubkey,
+    lamports: solToLamports(recipientAmount),
+  });
+  
+  // Transfer fee to fee wallet
+  const transferFee = SystemProgram.transfer({
+    fromPubkey,
+    toPubkey: feePubkey,
+    lamports: solToLamports(feeAmount),
+  });
+  
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+  const transaction = new Transaction({
+    feePayer: fromPubkey,
+    blockhash,
+    lastValidBlockHeight,
+  });
+  
+  transaction.add(transferToRecipient);
+  transaction.add(transferFee);
+  
+  const signature = await transact(async (wallet: Web3MobileWallet) => {
+    await wallet.authorize({
+      cluster: getSolanaNetwork(),
+      identity: APP_IDENTITY,
+    });
+    
+    const signedTxs = await wallet.signAndSendTransactions({
+      transactions: [transaction],
+    });
+    
+    return signedTxs[0];
+  });
+  
+  return signature;
+};
+
+// Send USDC transfer WITH fee (two token transfers in one transaction)
+export const sendUsdcTransferWithFee = async (
+  fromWallet: string,
+  toWallet: string,
+  recipientAmount: number, // Amount recipient receives
+  feeAmount: number,       // Fee amount
+): Promise<string> => {
+  if (!isFeeConfigured()) {
+    throw new Error('Fee wallet not configured');
+  }
+
+  const connection = getConnection();
+  const usdcMint = new PublicKey(getCurrentUsdcMint());
+  const fromPubkey = new PublicKey(fromWallet);
+  const toPubkey = new PublicKey(toWallet);
+  const feePubkey = new PublicKey(FEE_WALLET);
+  
+  const fromAta = await getAssociatedTokenAddress(usdcMint, fromPubkey);
+  const toAta = await getAssociatedTokenAddress(usdcMint, toPubkey);
+  const feeAta = await getAssociatedTokenAddress(usdcMint, feePubkey);
+  
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+  const transaction = new Transaction({
+    feePayer: fromPubkey,
+    blockhash,
+    lastValidBlockHeight,
+  });
+  
+  // Check if recipient ATA exists, create if needed
+  try {
+    await getAccount(connection, toAta);
+  } catch {
+    transaction.add(
+      createAssociatedTokenAccountInstruction(
+        fromPubkey,
+        toAta,
+        toPubkey,
+        usdcMint
+      )
+    );
+  }
+  
+  // Check if fee wallet ATA exists, create if needed
+  try {
+    await getAccount(connection, feeAta);
+  } catch {
+    transaction.add(
+      createAssociatedTokenAccountInstruction(
+        fromPubkey,
+        feeAta,
+        feePubkey,
+        usdcMint
+      )
+    );
+  }
+  
+  // Transfer to recipient
+  transaction.add(
+    createTransferInstruction(
+      fromAta,
+      toAta,
+      fromPubkey,
+      usdcToLamports(recipientAmount),
+      [],
+      TOKEN_PROGRAM_ID
+    )
+  );
+  
+  // Transfer fee
+  transaction.add(
+    createTransferInstruction(
+      fromAta,
+      feeAta,
+      fromPubkey,
+      usdcToLamports(feeAmount),
+      [],
+      TOKEN_PROGRAM_ID
+    )
+  );
+  
+  const signature = await transact(async (wallet: Web3MobileWallet) => {
+    await wallet.authorize({
+      cluster: getSolanaNetwork(),
+      identity: APP_IDENTITY,
+    });
+    
+    const signedTxs = await wallet.signAndSendTransactions({
+      transactions: [transaction],
+    });
+    
+    return signedTxs[0];
+  });
+  
+  return signature;
 };
 
 // Detect error type from MWA/Solana errors

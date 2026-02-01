@@ -156,6 +156,20 @@ function RootLayoutNav() {
             title: 'Settings',
           }} 
         />
+        <Stack.Screen 
+          name="pay" 
+          options={{ 
+            title: 'Payment',
+            presentation: 'modal',
+          }} 
+        />
+        <Stack.Screen 
+          name="group/request" 
+          options={{ 
+            title: 'Request Payment',
+            presentation: 'modal',
+          }} 
+        />
       </Stack>
     </View>
   );

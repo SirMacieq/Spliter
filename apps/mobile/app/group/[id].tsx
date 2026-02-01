@@ -108,18 +108,30 @@ export default function GroupDetailScreen() {
             ]}>
               ${item.amount.toFixed(2)}
             </Text>
-            {(isYouOwing || isYouOwed) && (
-              <TouchableOpacity 
-                style={styles.settleButton}
-                onPress={() => {
-                  const toWallet = isYouOwing ? item.to : item.from;
-                  router.push(`/group/settle?groupId=${id}&to=${toWallet}&amount=${item.amount}`);
-                }}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.settleButtonText}>Settle</Text>
-              </TouchableOpacity>
-            )}
+            <View style={styles.balanceActions}>
+              {isYouOwing && (
+                <TouchableOpacity 
+                  style={styles.settleButton}
+                  onPress={() => {
+                    router.push(`/group/settle?groupId=${id}&to=${item.to}&amount=${item.amount}`);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.settleButtonText}>Pay</Text>
+                </TouchableOpacity>
+              )}
+              {isYouOwed && (
+                <TouchableOpacity 
+                  style={styles.requestButton}
+                  onPress={() => {
+                    router.push(`/group/request?groupId=${id}&from=${item.from}&amount=${item.amount}&currency=USDC`);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.requestButtonText}>Request</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
         </View>
       </Card>
@@ -418,6 +430,10 @@ const styles = StyleSheet.create({
   balanceNegative: {
     color: COLORS.error,
   },
+  balanceActions: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+  },
   settleButton: {
     backgroundColor: COLORS.primary,
     paddingHorizontal: SPACING.lg,
@@ -425,6 +441,18 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.sm,
   },
   settleButtonText: {
+    ...TYPOGRAPHY.smallMedium,
+    color: COLORS.text,
+  },
+  requestButton: {
+    backgroundColor: COLORS.surfaceLight,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  requestButtonText: {
     ...TYPOGRAPHY.smallMedium,
     color: COLORS.text,
   },
