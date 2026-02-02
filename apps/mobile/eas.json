@@ -4,11 +4,25 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SOLANA_RPC_URL": "https://api.mainnet-beta.solana.com",
+        "EXPO_PUBLIC_SOLANA_NETWORK": "mainnet-beta",
+        "EXPO_PUBLIC_USDC_MINT": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "EXPO_PUBLIC_FEE_BPS": "250",
+        "EXPO_PUBLIC_FEE_WALLET": "HR9tQP2HNX2bqdLnEVJ97CG2hcVFGJvbTqM3maGfsy2A"
       }
     },
     "production": {
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_SOLANA_RPC_URL": "https://api.mainnet-beta.solana.com",
+        "EXPO_PUBLIC_SOLANA_NETWORK": "mainnet-beta",
+        "EXPO_PUBLIC_USDC_MINT": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "EXPO_PUBLIC_FEE_BPS": "250",
+        "EXPO_PUBLIC_FEE_WALLET": "HR9tQP2HNX2bqdLnEVJ97CG2hcVFGJvbTqM3maGfsy2A"
       }
     }
   }
