@@ -14,8 +14,8 @@ import * as Clipboard from 'expo-clipboard';
 import * as Linking from 'expo-linking';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import QRCode from 'react-native-qrcode-svg';
-import { useGroupStore } from '../../stores/groupStore';
-import { Button, Card, SectionHeader } from '../../components';
+import { useWalletPublicKey } from '../../stores/walletStore';
+import { Button, Card, SectionHeader, SpliterLogo } from '../../components';
 import { COLORS, SPACING, TYPOGRAPHY, RADIUS, FEE_PERCENT, isFeeConfigured } from '../../lib/constants';
 import { generatePayLink, shortenAddress, PayLinkCurrency } from '../../lib/validation';
 
@@ -23,14 +23,12 @@ type Currency = 'SOL' | 'USDC';
 
 export default function RequestPaymentScreen() {
   const router = useRouter();
-  const { groupId, from, amount: initialAmount, currency: initialCurrency } = useLocalSearchParams<{ 
+  const publicKey = useWalletPublicKey();
+  const { groupId, amount: initialAmount, currency: initialCurrency } = useLocalSearchParams<{ 
     groupId?: string; 
-    from?: string; // The wallet that owes money (will be the payer)
     amount?: string;
     currency?: string;
   }>();
-  
-  const group = useGroupStore((state) => state.getGroupById(groupId || ''));
   
   const [amount, setAmount] = useState(initialAmount || '');
   const [currency, setCurrency] = useState<Currency>((initialCurrency?.toUpperCase() as Currency) || 'USDC');
@@ -42,10 +40,6 @@ export default function RequestPaymentScreen() {
   const feeConfigured = isFeeConfigured();
   const parsedAmount = parseFloat(amount) || 0;
   
-  // Get display name for the payer
-  const payerMember = group?.members.find(m => m.wallet === from);
-  const payerDisplay = payerMember?.nickname || (from ? shortenAddress(from, 4) : 'Someone');
-  
   const handleAmountChange = (text: string) => {
     const cleaned = text.replace(/[^0-9.]/g, '');
     const parts = cleaned.split('.');
@@ -56,10 +50,10 @@ export default function RequestPaymentScreen() {
   };
   
   const handleGenerateLink = () => {
-    if (!from || parsedAmount <= 0) return;
+    if (!publicKey || parsedAmount <= 0) return;
     
     const link = generatePayLink({
-      to: from, // "from" is who owes money, so they pay TO the requester's wallet (current user)
+      to: publicKey, // Payment goes TO the requester (current user)
       amount: parsedAmount,
       currency: currency as PayLinkCurrency,
       groupId,
@@ -128,7 +122,7 @@ export default function RequestPaymentScreen() {
             <View style={styles.linkHeader}>
               <Text style={styles.linkTitle}>Share Payment Link</Text>
               <Text style={styles.linkSubtitle}>
-                Send this to {payerDisplay} to request payment
+                Anyone with this link can pay you
               </Text>
             </View>
             
@@ -205,13 +199,11 @@ export default function RequestPaymentScreen() {
         <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
           {/* Header */}
           <View style={styles.formHeader}>
-            <Text style={styles.formEmoji}>💸</Text>
+            <SpliterLogo size={64} style={styles.formLogo} />
             <Text style={styles.formTitle}>Request Payment</Text>
-            {from && (
-              <Text style={styles.formSubtitle}>
-                from {payerDisplay}
-              </Text>
-            )}
+            <Text style={styles.formSubtitle}>
+              Create a shareable pay link
+            </Text>
           </View>
           
           {/* Currency Toggle */}
@@ -292,7 +284,7 @@ export default function RequestPaymentScreen() {
           <Button
             title="Generate Payment Link"
             onPress={handleGenerateLink}
-            disabled={parsedAmount <= 0 || !from}
+            disabled={parsedAmount <= 0 || !publicKey}
             size="large"
             fullWidth
           />
@@ -343,9 +335,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: SPACING['2xl'],
   },
-  formEmoji: {
-    fontSize: 48,
-    marginBottom: SPACING.md,
+  formLogo: {
+    marginBottom: SPACING.lg,
   },
   formTitle: {
     ...TYPOGRAPHY.h2,

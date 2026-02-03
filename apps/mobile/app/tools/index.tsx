@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { Card, NetworkBadge } from '../../components';
 import { COLORS, SPACING, TYPOGRAPHY, RADIUS } from '../../lib/constants';
@@ -37,22 +37,14 @@ const ToolItem: React.FC<ToolItemProps> = ({ icon, title, description, onPress, 
 export default function ToolsHubScreen() {
   const router = useRouter();
 
-  const handlePayRequest = () => {
-    router.push('/group/request' as any);
-  };
-
-  const handleSendToken = () => {
-    // For v1, redirect to batch with hint for single transfer
-    // In future: dedicated single-send screen
+  const handleBatchToken = () => {
+    // Go to batch screen - it defaults to TOKEN mode
     router.push('/tools/batch' as any);
   };
 
-  const handleSendNft = () => {
-    // For v1, redirect to batch in NFT mode
-    router.push('/tools/batch' as any);
-  };
-
-  const handleBatch = () => {
+  const handleBatchNft = () => {
+    // Go to batch screen - user can switch to NFT mode there
+    // In future: pass mode param
     router.push('/tools/batch' as any);
   };
 
@@ -60,7 +52,7 @@ export default function ToolsHubScreen() {
     <>
       <Stack.Screen 
         options={{ 
-          title: 'Tools',
+          title: 'Send in Bulk',
           headerBackTitle: 'Home',
         }} 
       />
@@ -71,50 +63,41 @@ export default function ToolsHubScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Send & Request</Text>
+          <Text style={styles.headerTitle}>Bulk Send</Text>
           <Text style={styles.headerSubtitle}>
-            All the tools you need for payments
+            Send tokens or NFTs to multiple recipients
           </Text>
         </View>
 
-        {/* Pay Requests */}
+        {/* Token Batch */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Request Payments</Text>
+          <Text style={styles.sectionTitle}>Tokens</Text>
           <ToolItem
-            icon="🔗"
-            title="Pay Link & QR"
-            description="Create shareable payment requests"
-            onPress={handlePayRequest}
-          />
-        </View>
-
-        {/* Send */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Send Assets</Text>
-          <ToolItem
-            icon="💸"
-            title="Send Token"
-            description="SOL, USDC, or any SPL token"
-            onPress={handleSendToken}
-          />
-          <ToolItem
-            icon="🖼️"
-            title="Send NFT"
-            description="Transfer NFTs to another wallet"
-            onPress={handleSendNft}
-          />
-        </View>
-
-        {/* Batch */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Bulk Operations</Text>
-          <ToolItem
-            icon="📦"
-            title="Batch Payout"
-            description="Send to multiple recipients at once"
-            onPress={handleBatch}
+            icon="💰"
+            title="Batch Token Payout"
+            description="Send SOL, USDC, or SPL tokens to multiple wallets"
+            onPress={handleBatchToken}
             badge="CSV"
           />
+        </View>
+
+        {/* NFT Batch */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>NFTs</Text>
+          <ToolItem
+            icon="🖼️"
+            title="Batch NFT Transfer"
+            description="Transfer multiple NFTs to different recipients"
+            onPress={handleBatchNft}
+          />
+        </View>
+
+        {/* Info */}
+        <View style={styles.infoCard}>
+          <Text style={styles.infoText}>
+            💡 Import recipients via CSV or paste them directly.{'\n'}
+            Transfers are batched for minimal wallet approvals.
+          </Text>
         </View>
 
         <NetworkBadge style={styles.networkBadge} />
@@ -208,8 +191,20 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     fontWeight: '600',
   },
+  infoCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.lg,
+    marginBottom: SPACING.xl,
+  },
+  infoText: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textSecondary,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
   networkBadge: {
     alignSelf: 'center',
-    marginTop: SPACING.xl,
+    marginTop: SPACING.md,
   },
 });

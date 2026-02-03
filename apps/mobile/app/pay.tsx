@@ -12,7 +12,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { useWalletPublicKey, useIsConnected } from '../stores/walletStore';
 import { useGroupStore } from '../stores/groupStore';
-import { Button, Card, NetworkBadge } from '../components';
+import { Button, Card, NetworkBadge, SpliterLogo } from '../components';
 import { 
   COLORS, 
   SPACING, 
@@ -620,7 +620,7 @@ export default function PayScreen() {
         <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
           {/* Header */}
           <View style={styles.requestHeader}>
-            <Text style={styles.requestEmoji}>💸</Text>
+            <SpliterLogo size={64} style={styles.requestLogo} />
             <Text style={styles.requestTitle}>Payment Request</Text>
           </View>
           
@@ -748,9 +748,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: SPACING['2xl'],
   },
-  requestEmoji: {
-    fontSize: 48,
-    marginBottom: SPACING.md,
+  requestLogo: {
+    marginBottom: SPACING.lg,
   },
   requestTitle: {
     ...TYPOGRAPHY.h2,

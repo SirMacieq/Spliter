@@ -3,20 +3,17 @@ import {
   View, 
   Text, 
   StyleSheet, 
-  FlatList, 
+  ScrollView, 
   TouchableOpacity,
-  RefreshControl,
 } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
-import { useGroupStore, useGroups, useIsGroupsLoading } from '../stores/groupStore';
 import { useWalletPublicKey } from '../stores/walletStore';
-import { Button, NetworkBadge, EmptyState, Card, SpliterLogo } from '../components';
+import { NetworkBadge, SpliterLogo } from '../components';
 import { COLORS, SPACING, TYPOGRAPHY, RADIUS } from '../lib/constants';
-import { Group } from '../lib/types';
 
 // Primary action card component
 interface PrimaryActionProps {
-  icon: string;
+  icon: React.ReactNode;
   title: string;
   description: string;
   accentColor: string;
@@ -32,7 +29,7 @@ const PrimaryAction: React.FC<PrimaryActionProps> = ({
     activeOpacity={0.85}
   >
     <View style={[styles.primaryIconContainer, { backgroundColor: `${accentColor}20` }]}>
-      <Text style={styles.primaryIcon}>{icon}</Text>
+      {icon}
     </View>
     <Text style={styles.primaryTitle}>{title}</Text>
     <Text style={styles.primaryDescription}>{description}</Text>
@@ -44,113 +41,20 @@ const PrimaryAction: React.FC<PrimaryActionProps> = ({
 
 export default function HomeScreen() {
   const router = useRouter();
-  const groups = useGroups();
-  const hydrate = useGroupStore((state) => state.hydrate);
-  const isLoading = useIsGroupsLoading();
   const publicKey = useWalletPublicKey();
   
   const handleSettings = () => {
     router.push('/settings');
   };
-  
-  const handleCreateGroup = () => {
-    router.push('/group/create');
-  };
-  
-  const handleGroupPress = (group: Group) => {
-    router.push(`/group/${group.id}`);
-  };
 
   const handleSplitRequest = () => {
-    if (groups.length > 0) {
-      // If has groups, go to first group's request flow
-      router.push('/group/request' as any);
-    } else {
-      // Otherwise create a group first
-      router.push('/group/create');
-    }
+    // Go directly to request payment (create pay link)
+    router.push('/group/request' as any);
   };
 
   const handleBulkSend = () => {
     router.push('/tools' as any);
   };
-  
-  const renderGroup = ({ item }: { item: Group }) => (
-    <Card 
-      style={styles.groupCard}
-      onPress={() => handleGroupPress(item)}
-    >
-      <View style={styles.groupContent}>
-        <View style={styles.groupAvatar}>
-          <Text style={styles.groupAvatarText}>
-            {item.name.charAt(0).toUpperCase()}
-          </Text>
-        </View>
-        <View style={styles.groupInfo}>
-          <Text style={styles.groupName} numberOfLines={1}>{item.name}</Text>
-          <Text style={styles.groupMembers}>
-            {item.members.length} member{item.members.length !== 1 ? 's' : ''}
-          </Text>
-        </View>
-        <View style={styles.groupArrowContainer}>
-          <Text style={styles.groupArrow}>›</Text>
-        </View>
-      </View>
-    </Card>
-  );
-  
-  const renderEmptyState = () => (
-    <EmptyState
-      emoji="👋"
-      title="No groups yet"
-      message="Create your first group to start splitting expenses with friends."
-      actionLabel="Create Group"
-      onAction={handleCreateGroup}
-    />
-  );
-
-  const renderHeader = () => (
-    <>
-      {/* Wallet Info Bar */}
-      <View style={styles.walletBar}>
-        <View style={styles.walletInfo}>
-          <Text style={styles.walletLabel}>Wallet</Text>
-          <Text style={styles.walletAddress}>
-            {publicKey ? `${publicKey.slice(0, 6)}···${publicKey.slice(-4)}` : '—'}
-          </Text>
-        </View>
-        <NetworkBadge />
-      </View>
-      
-      {/* Primary Actions */}
-      <View style={styles.primaryActions}>
-        <PrimaryAction
-          icon="💸"
-          title="Split & Request"
-          description="Settle expenses with friends via links & QR"
-          accentColor={COLORS.primary}
-          onPress={handleSplitRequest}
-        />
-        <PrimaryAction
-          icon="📦"
-          title="Send in Bulk"
-          description="Send tokens & NFTs to multiple wallets"
-          accentColor={COLORS.secondary}
-          onPress={handleBulkSend}
-        />
-      </View>
-      
-      {/* Groups Section Title */}
-      {groups.length > 0 && (
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Your Groups</Text>
-          <TouchableOpacity onPress={handleCreateGroup}>
-            <Text style={styles.sectionAction}>+ New</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-    </>
-  );
   
   return (
     <>
@@ -174,24 +78,47 @@ export default function HomeScreen() {
         }}
       />
     
-      <View style={styles.container}>
-        <FlatList
-          data={groups}
-          renderItem={renderGroup}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
-          ListHeaderComponent={renderHeader}
-          ListEmptyComponent={renderEmptyState}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={isLoading}
-              onRefresh={hydrate}
-              tintColor={COLORS.primary}
-            />
-          }
-        />
-      </View>
+      <ScrollView 
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Wallet Info Bar */}
+        <View style={styles.walletBar}>
+          <View style={styles.walletInfo}>
+            <Text style={styles.walletLabel}>Wallet</Text>
+            <Text style={styles.walletAddress}>
+              {publicKey ? `${publicKey.slice(0, 6)}···${publicKey.slice(-4)}` : '—'}
+            </Text>
+          </View>
+          <NetworkBadge />
+        </View>
+        
+        {/* Primary Actions */}
+        <View style={styles.primaryActions}>
+          <PrimaryAction
+            icon={<SpliterLogo size={28} />}
+            title="Split & Request"
+            description="Create payment links & QR codes to request money"
+            accentColor={COLORS.primary}
+            onPress={handleSplitRequest}
+          />
+          <PrimaryAction
+            icon={<Text style={styles.primaryIconEmoji}>📦</Text>}
+            title="Send in Bulk"
+            description="Send tokens & NFTs to multiple wallets at once"
+            accentColor={COLORS.secondary}
+            onPress={handleBulkSend}
+          />
+        </View>
+
+        {/* Quick Info */}
+        <View style={styles.infoSection}>
+          <Text style={styles.infoText}>
+            All payments settle instantly on Solana with a {'\n'}2.5% service fee
+          </Text>
+        </View>
+      </ScrollView>
     </>
   );
 }
@@ -200,6 +127,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
+  },
+  content: {
+    padding: SPACING.xl,
+    paddingBottom: SPACING['4xl'],
   },
   
   // Header
@@ -219,12 +150,6 @@ const styles = StyleSheet.create({
   },
   settingsIcon: {
     fontSize: 22,
-  },
-  
-  listContent: {
-    padding: SPACING.xl,
-    paddingBottom: 100,
-    flexGrow: 1,
   },
   
   // Wallet Bar
@@ -253,116 +178,60 @@ const styles = StyleSheet.create({
   
   // Primary Actions
   primaryActions: {
-    flexDirection: 'row',
-    gap: SPACING.md,
+    gap: SPACING.lg,
     marginBottom: SPACING['3xl'],
   },
   primaryCard: {
-    flex: 1,
     backgroundColor: COLORS.surface,
     borderRadius: RADIUS.xl,
     padding: SPACING.xl,
     borderWidth: 1,
-    minHeight: 180,
   },
   primaryIconContainer: {
-    width: 48,
-    height: 48,
+    width: 52,
+    height: 52,
     borderRadius: RADIUS.md,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: SPACING.lg,
   },
-  primaryIcon: {
-    fontSize: 24,
+  primaryIconEmoji: {
+    fontSize: 26,
   },
   primaryTitle: {
-    ...TYPOGRAPHY.bodyMedium,
+    ...TYPOGRAPHY.h3,
     color: COLORS.text,
     marginBottom: SPACING.xs,
   },
   primaryDescription: {
-    ...TYPOGRAPHY.small,
+    ...TYPOGRAPHY.body,
     color: COLORS.textSecondary,
-    lineHeight: 18,
-    flex: 1,
+    lineHeight: 22,
+    marginBottom: SPACING.lg,
   },
   primaryArrow: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
     alignSelf: 'flex-end',
-    marginTop: SPACING.md,
   },
   primaryArrowText: {
     color: COLORS.background,
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
   },
-  
-  // Section Header
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+
+  // Info Section
+  infoSection: {
     alignItems: 'center',
-    marginBottom: SPACING.md,
+    paddingVertical: SPACING.xl,
   },
-  sectionTitle: {
-    ...TYPOGRAPHY.captionMedium,
-    color: COLORS.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  sectionAction: {
-    ...TYPOGRAPHY.smallMedium,
-    color: COLORS.primary,
-  },
-  
-  // Group Cards
-  groupCard: {
-    marginBottom: SPACING.md,
-    padding: SPACING.lg,
-  },
-  groupContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  groupAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: RADIUS.md,
-    backgroundColor: COLORS.primaryMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: SPACING.md,
-  },
-  groupAvatarText: {
-    ...TYPOGRAPHY.h3,
-    color: COLORS.primary,
-  },
-  groupInfo: {
-    flex: 1,
-  },
-  groupName: {
-    ...TYPOGRAPHY.bodyMedium,
-    color: COLORS.text,
-    marginBottom: SPACING.xs,
-  },
-  groupMembers: {
+  infoText: {
     ...TYPOGRAPHY.small,
-    color: COLORS.textSecondary,
-  },
-  groupArrowContainer: {
-    width: 24,
-    height: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  groupArrow: {
-    fontSize: 24,
     color: COLORS.textMuted,
-    fontWeight: '300',
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });
