@@ -10,9 +10,37 @@ import {
 import { useRouter, Stack } from 'expo-router';
 import { useGroupStore, useGroups, useIsGroupsLoading } from '../stores/groupStore';
 import { useWalletPublicKey } from '../stores/walletStore';
-import { Button, NetworkBadge, EmptyState, Card } from '../components';
+import { Button, NetworkBadge, EmptyState, Card, SpliterLogo } from '../components';
 import { COLORS, SPACING, TYPOGRAPHY, RADIUS } from '../lib/constants';
 import { Group } from '../lib/types';
+
+// Primary action card component
+interface PrimaryActionProps {
+  icon: string;
+  title: string;
+  description: string;
+  accentColor: string;
+  onPress: () => void;
+}
+
+const PrimaryAction: React.FC<PrimaryActionProps> = ({ 
+  icon, title, description, accentColor, onPress 
+}) => (
+  <TouchableOpacity 
+    style={[styles.primaryCard, { borderColor: accentColor }]} 
+    onPress={onPress}
+    activeOpacity={0.85}
+  >
+    <View style={[styles.primaryIconContainer, { backgroundColor: `${accentColor}20` }]}>
+      <Text style={styles.primaryIcon}>{icon}</Text>
+    </View>
+    <Text style={styles.primaryTitle}>{title}</Text>
+    <Text style={styles.primaryDescription}>{description}</Text>
+    <View style={[styles.primaryArrow, { backgroundColor: accentColor }]}>
+      <Text style={styles.primaryArrowText}>→</Text>
+    </View>
+  </TouchableOpacity>
+);
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -31,6 +59,20 @@ export default function HomeScreen() {
   
   const handleGroupPress = (group: Group) => {
     router.push(`/group/${group.id}`);
+  };
+
+  const handleSplitRequest = () => {
+    if (groups.length > 0) {
+      // If has groups, go to first group's request flow
+      router.push('/group/request' as any);
+    } else {
+      // Otherwise create a group first
+      router.push('/group/create');
+    }
+  };
+
+  const handleBulkSend = () => {
+    router.push('/tools' as any);
   };
   
   const renderGroup = ({ item }: { item: Group }) => (
@@ -66,43 +108,46 @@ export default function HomeScreen() {
       onAction={handleCreateGroup}
     />
   );
-  
-  const handleBatchPayout = () => {
-    router.push('/tools/batch' as any);
-  };
 
   const renderHeader = () => (
     <>
-      <View style={styles.walletCard}>
+      {/* Wallet Info Bar */}
+      <View style={styles.walletBar}>
         <View style={styles.walletInfo}>
-          <Text style={styles.walletLabel}>Connected Wallet</Text>
+          <Text style={styles.walletLabel}>Wallet</Text>
           <Text style={styles.walletAddress}>
-            {publicKey ? `${publicKey.slice(0, 6)}···${publicKey.slice(-4)}` : 'Not connected'}
+            {publicKey ? `${publicKey.slice(0, 6)}···${publicKey.slice(-4)}` : '—'}
           </Text>
         </View>
         <NetworkBadge />
       </View>
       
-      {/* Tools Section */}
-      <View style={styles.toolsSection}>
-        <Text style={styles.toolsSectionTitle}>Tools</Text>
-        <Card style={styles.toolCard} onPress={handleBatchPayout}>
-          <View style={styles.toolContent}>
-            <View style={styles.toolIcon}>
-              <Text style={styles.toolIconText}>📦</Text>
-            </View>
-            <View style={styles.toolInfo}>
-              <Text style={styles.toolName}>Batch Payout</Text>
-              <Text style={styles.toolDesc}>Send to multiple recipients</Text>
-            </View>
-            <Text style={styles.toolArrow}>›</Text>
-          </View>
-        </Card>
+      {/* Primary Actions */}
+      <View style={styles.primaryActions}>
+        <PrimaryAction
+          icon="💸"
+          title="Split & Request"
+          description="Settle expenses with friends via links & QR"
+          accentColor={COLORS.primary}
+          onPress={handleSplitRequest}
+        />
+        <PrimaryAction
+          icon="📦"
+          title="Send in Bulk"
+          description="Send tokens & NFTs to multiple wallets"
+          accentColor={COLORS.secondary}
+          onPress={handleBulkSend}
+        />
       </View>
       
       {/* Groups Section Title */}
       {groups.length > 0 && (
-        <Text style={styles.sectionTitle}>Groups</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Your Groups</Text>
+          <TouchableOpacity onPress={handleCreateGroup}>
+            <Text style={styles.sectionAction}>+ New</Text>
+          </TouchableOpacity>
+        </View>
       )}
     </>
   );
@@ -111,7 +156,12 @@ export default function HomeScreen() {
     <>
       <Stack.Screen 
         options={{
-          title: 'Spliter',
+          headerTitle: () => (
+            <View style={styles.headerBrand}>
+              <SpliterLogo size={28} />
+              <Text style={styles.headerTitle}>Spliter</Text>
+            </View>
+          ),
           headerRight: () => (
             <TouchableOpacity 
               onPress={handleSettings}
@@ -141,16 +191,6 @@ export default function HomeScreen() {
             />
           }
         />
-      
-        {groups.length > 0 && (
-          <TouchableOpacity 
-            style={styles.fab}
-            onPress={handleCreateGroup}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.fabText}>+</Text>
-          </TouchableOpacity>
-        )}
       </View>
     </>
   );
@@ -161,6 +201,18 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
+  
+  // Header
+  headerBrand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  headerTitle: {
+    ...TYPOGRAPHY.h3,
+    color: COLORS.text,
+    fontWeight: '700',
+  },
   settingsButton: {
     padding: SPACING.sm,
     marginRight: SPACING.xs,
@@ -168,14 +220,15 @@ const styles = StyleSheet.create({
   settingsIcon: {
     fontSize: 22,
   },
+  
   listContent: {
     padding: SPACING.xl,
     paddingBottom: 100,
     flexGrow: 1,
   },
   
-  // Wallet Card
-  walletCard: {
+  // Wallet Bar
+  walletBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -189,13 +242,82 @@ const styles = StyleSheet.create({
   },
   walletLabel: {
     ...TYPOGRAPHY.caption,
-    color: COLORS.textSecondary,
-    marginBottom: SPACING.xs,
+    color: COLORS.textMuted,
+    marginBottom: 2,
   },
   walletAddress: {
     ...TYPOGRAPHY.bodyMedium,
     color: COLORS.text,
     fontFamily: 'monospace',
+  },
+  
+  // Primary Actions
+  primaryActions: {
+    flexDirection: 'row',
+    gap: SPACING.md,
+    marginBottom: SPACING['3xl'],
+  },
+  primaryCard: {
+    flex: 1,
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.xl,
+    borderWidth: 1,
+    minHeight: 180,
+  },
+  primaryIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: RADIUS.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: SPACING.lg,
+  },
+  primaryIcon: {
+    fontSize: 24,
+  },
+  primaryTitle: {
+    ...TYPOGRAPHY.bodyMedium,
+    color: COLORS.text,
+    marginBottom: SPACING.xs,
+  },
+  primaryDescription: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textSecondary,
+    lineHeight: 18,
+    flex: 1,
+  },
+  primaryArrow: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-end',
+    marginTop: SPACING.md,
+  },
+  primaryArrowText: {
+    color: COLORS.background,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  
+  // Section Header
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SPACING.md,
+  },
+  sectionTitle: {
+    ...TYPOGRAPHY.captionMedium,
+    color: COLORS.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  sectionAction: {
+    ...TYPOGRAPHY.smallMedium,
+    color: COLORS.primary,
   },
   
   // Group Cards
@@ -208,8 +330,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   groupAvatar: {
-    width: 44,
-    height: 44,
+    width: 48,
+    height: 48,
     borderRadius: RADIUS.md,
     backgroundColor: COLORS.primaryMuted,
     alignItems: 'center',
@@ -242,86 +364,5 @@ const styles = StyleSheet.create({
     fontSize: 24,
     color: COLORS.textMuted,
     fontWeight: '300',
-  },
-  
-  // Tools Section
-  toolsSection: {
-    marginBottom: SPACING['2xl'],
-  },
-  toolsSectionTitle: {
-    ...TYPOGRAPHY.captionMedium,
-    color: COLORS.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: SPACING.md,
-  },
-  toolCard: {
-    padding: SPACING.lg,
-  },
-  toolContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  toolIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: RADIUS.md,
-    backgroundColor: COLORS.surfaceLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: SPACING.md,
-  },
-  toolIconText: {
-    fontSize: 20,
-  },
-  toolInfo: {
-    flex: 1,
-  },
-  toolName: {
-    ...TYPOGRAPHY.bodyMedium,
-    color: COLORS.text,
-    marginBottom: SPACING.xs,
-  },
-  toolDesc: {
-    ...TYPOGRAPHY.small,
-    color: COLORS.textSecondary,
-  },
-  toolArrow: {
-    fontSize: 24,
-    color: COLORS.textMuted,
-    fontWeight: '300',
-  },
-  
-  // Section Title
-  sectionTitle: {
-    ...TYPOGRAPHY.captionMedium,
-    color: COLORS.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: SPACING.md,
-  },
-
-  // FAB
-  fab: {
-    position: 'absolute',
-    right: SPACING.xl,
-    bottom: SPACING['3xl'],
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 6,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-  },
-  fabText: {
-    fontSize: 28,
-    color: COLORS.text,
-    fontWeight: '400',
-    marginTop: -2,
   },
 });

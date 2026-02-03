@@ -57,7 +57,7 @@ function useProtectedRoute() {
     if (isBooting) return;
     
     const firstSegment = segments[0] as string | undefined;
-    const inProtectedRoute = firstSegment === 'home' || firstSegment === 'group' || firstSegment === 'settings';
+    const inProtectedRoute = firstSegment === 'home' || firstSegment === 'group' || firstSegment === 'settings' || firstSegment === 'tools';
     
     if (!isConnected && inProtectedRoute) {
       // Redirect to welcome if trying to access protected route without connection
@@ -161,6 +161,12 @@ function RootLayoutNav() {
           options={{ 
             title: 'Payment',
             presentation: 'modal',
+          }} 
+        />
+        <Stack.Screen 
+          name="tools/index" 
+          options={{ 
+            title: 'Tools',
           }} 
         />
         <Stack.Screen 

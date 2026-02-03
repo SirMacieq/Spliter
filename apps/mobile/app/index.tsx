@@ -3,8 +3,8 @@ import { View, Text, StyleSheet } from 'react-native';
 import { useRouter, useRootNavigationState } from 'expo-router';
 import { useWalletStore, useIsConnected, useIsBooting } from '../stores/walletStore';
 import { useWalletConnection } from '../hooks/useWalletConnection';
-import { Button, NetworkBadge, SplashScreen } from '../components';
-import { COLORS, APP_NAME } from '../lib/constants';
+import { Button, NetworkBadge, SplashScreen, SpliterLogo } from '../components';
+import { COLORS, APP_NAME, SPACING, TYPOGRAPHY, RADIUS } from '../lib/constants';
 
 export default function WelcomeScreen() {
   const router = useRouter();
@@ -34,34 +34,31 @@ export default function WelcomeScreen() {
   
   return (
     <View style={styles.container}>
+      {/* Network Badge - subtle at top */}
+      <View style={styles.header}>
+        <NetworkBadge />
+      </View>
+      
+      {/* Main Content - centered */}
       <View style={styles.content}>
-        {/* Network Badge */}
-        <NetworkBadge style={styles.networkBadge} />
+        {/* Brand Logo */}
+        <SpliterLogo size={140} style={styles.logo} />
         
-        {/* Logo */}
-        <View style={styles.logoContainer}>
-          <Text style={styles.logoEmoji}>💸</Text>
-          <Text style={styles.logoText}>{APP_NAME}</Text>
-        </View>
+        {/* App Name */}
+        <Text style={styles.title}>{APP_NAME}</Text>
         
         {/* Tagline */}
         <Text style={styles.tagline}>
-          Split expenses with friends.{'\n'}
-          Settle instantly on Solana.
+          Split, request & send — on Solana
         </Text>
-        
-        {/* Features */}
-        <View style={styles.features}>
-          <FeatureItem emoji="👥" text="Create groups with friends" />
-          <FeatureItem emoji="📝" text="Track shared expenses" />
-          <FeatureItem emoji="⚡" text="Settle up in USDC instantly" />
-        </View>
       </View>
       
-      {/* Connect Button */}
+      {/* Footer - CTA */}
       <View style={styles.footer}>
         {wallet.status === 'error' && (
-          <Text style={styles.errorText}>{wallet.error}</Text>
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{wallet.error}</Text>
+          </View>
         )}
         
         <Button
@@ -70,92 +67,65 @@ export default function WelcomeScreen() {
           loading={wallet.status === 'connecting'}
           disabled={wallet.status === 'connecting'}
           size="large"
-          style={styles.connectButton}
+          fullWidth
         />
         
-        <Text style={styles.footerText}>
-          Works with Phantom, Solflare, and Seeker
+        <Text style={styles.footerHint}>
+          Works with Phantom, Solflare & Seeker
         </Text>
       </View>
     </View>
   );
 }
 
-const FeatureItem = ({ emoji, text }: { emoji: string; text: string }) => (
-  <View style={styles.featureItem}>
-    <Text style={styles.featureEmoji}>{emoji}</Text>
-    <Text style={styles.featureText}>{text}</Text>
-  </View>
-);
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
-    paddingHorizontal: 24,
-    paddingTop: 60,
-    paddingBottom: 40,
+    paddingHorizontal: SPACING['2xl'],
+    paddingTop: SPACING['4xl'],
+    paddingBottom: SPACING['4xl'],
+  },
+  header: {
+    alignItems: 'flex-end',
   },
   content: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: SPACING['4xl'],
   },
-  networkBadge: {
-    marginBottom: 24,
+  logo: {
+    marginBottom: SPACING['2xl'],
   },
-  logoContainer: {
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  logoEmoji: {
-    fontSize: 64,
-    marginBottom: 12,
-  },
-  logoText: {
-    fontSize: 42,
-    fontWeight: 'bold',
+  title: {
+    fontSize: 36,
+    fontWeight: '700',
     color: COLORS.text,
+    letterSpacing: -0.5,
+    marginBottom: SPACING.md,
   },
   tagline: {
-    fontSize: 20,
+    ...TYPOGRAPHY.body,
     color: COLORS.textSecondary,
     textAlign: 'center',
-    lineHeight: 28,
-    marginBottom: 48,
-  },
-  features: {
-    width: '100%',
-    gap: 16,
-  },
-  featureItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.surface,
-    padding: 16,
-    borderRadius: 12,
-  },
-  featureEmoji: {
-    fontSize: 24,
-    marginRight: 16,
-  },
-  featureText: {
-    fontSize: 16,
-    color: COLORS.text,
   },
   footer: {
-    alignItems: 'center',
-    gap: 16,
+    gap: SPACING.lg,
   },
-  connectButton: {
-    width: '100%',
-  },
-  footerText: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
+  errorBanner: {
+    backgroundColor: COLORS.errorMuted,
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
   },
   errorText: {
-    fontSize: 14,
+    ...TYPOGRAPHY.small,
     color: COLORS.error,
+    textAlign: 'center',
+  },
+  footerHint: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textMuted,
     textAlign: 'center',
   },
 });
