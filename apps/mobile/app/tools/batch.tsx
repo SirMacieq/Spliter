@@ -46,19 +46,24 @@ import {
   getNetworkName,
   NFT_FEE_SOL,
   STORAGE_KEYS,
+  BATCH_CHUNK_SIZE_SOL,
+  BATCH_CHUNK_SIZE_SPL,
 } from '../../lib/constants';
 import {
   getSolBalance,
   getTokenBalance,
   getTokenDecimals,
-  sendSolTransferWithFee,
-  sendSplTokenTransferWithFee,
   sendNftTransferWithFee,
   ownsNft,
   waitForConfirmation,
   checkTransactionStatus,
   getExplorerUrl,
   categorizeError,
+  buildBatchSolTransaction,
+  buildBatchSplTransaction,
+  sendBatchTransactions,
+  BatchSolTransfer,
+  BatchSplTransfer,
 } from '../../lib/solana';
 import { isValidSolanaAddress, shortenAddress } from '../../lib/validation';
 
@@ -101,6 +106,15 @@ interface BatchDraft {
   phase: BatchPhase;
   createdAt: number;
   walletAddress: string;
+  /** Track which chunk we're on for resume */
+  currentChunk?: number;
+}
+
+// Chunk info for UI display
+interface ChunkInfo {
+  totalChunks: number;
+  chunkSize: number;
+  reason: string; // e.g., "transaction size limit"
 }
 
 // ============================================
@@ -170,8 +184,12 @@ export default function BatchPayoutScreen() {
   // Execution state
   const [phase, setPhase] = useState<BatchPhase>('input');
   const [currentRowIndex, setCurrentRowIndex] = useState(-1);
+  const [currentChunkIndex, setCurrentChunkIndex] = useState(-1);
   const stopRequestedRef = useRef(false);
   const isExecutingRef = useRef(false);
+  
+  // Chunk info for UI
+  const [chunkInfo, setChunkInfo] = useState<ChunkInfo | null>(null);
   
   // Resume state
   const [hasDraft, setHasDraft] = useState(false);
@@ -187,6 +205,37 @@ export default function BatchPayoutScreen() {
     if (tokenAsset === 'USDC') return getCurrentUsdcMint();
     return customMint;
   };
+
+  // Calculate chunk info for display
+  const calculateChunkInfo = useCallback((rowCount: number): ChunkInfo => {
+    if (mode === 'NFT') {
+      // NFTs still need individual transactions (each includes SPL transfer + SOL fee)
+      return {
+        totalChunks: rowCount,
+        chunkSize: 1,
+        reason: 'NFT transfers require individual transactions',
+      };
+    }
+
+    const chunkSize = tokenAsset === 'SOL' ? BATCH_CHUNK_SIZE_SOL : BATCH_CHUNK_SIZE_SPL;
+    const totalChunks = Math.ceil(rowCount / chunkSize);
+    
+    if (totalChunks === 1) {
+      return {
+        totalChunks: 1,
+        chunkSize,
+        reason: 'All transfers fit in one transaction',
+      };
+    }
+
+    return {
+      totalChunks,
+      chunkSize,
+      reason: tokenAsset === 'SOL' 
+        ? 'Chunked due to transaction size limit'
+        : 'Chunked due to SPL token transfer complexity',
+    };
+  }, [mode, tokenAsset]);
 
   // Check for saved draft on mount
   useEffect(() => {
@@ -435,6 +484,8 @@ export default function BatchPayoutScreen() {
       ...r,
       status: r.isValid ? 'queued' : 'pending',
     })));
+    // Calculate chunk info for display
+    setChunkInfo(calculateChunkInfo(validRows.length));
     setPhase('preview');
   };
 
@@ -450,56 +501,7 @@ export default function BatchPayoutScreen() {
     setRows(prev => prev.map(r => r.id === id ? { ...r, ...updates } as PayoutRow : r));
   };
 
-  // Execute token row
-  const executeTokenRow = async (row: TokenRow): Promise<void> => {
-    if (!publicKey || !row.isValid) return;
-
-    const feeAmount = calculateFee(row.amount);
-    updateRowStatus(row.id, { status: 'sending' });
-
-    try {
-      let signature: string;
-
-      if (tokenAsset === 'SOL') {
-        signature = await sendSolTransferWithFee(publicKey, row.recipient, row.amount, feeAmount);
-      } else {
-        const mint = getMintAddress();
-        signature = await sendSplTokenTransferWithFee(publicKey, row.recipient, mint, row.amount, feeAmount, tokenDecimals);
-      }
-
-      updateRowStatus(row.id, { status: 'sent', signature });
-
-      await addTxHistory({
-        signature,
-        from: publicKey,
-        to: row.recipient,
-        amount: row.amount,
-        currency: tokenAsset === 'SOL' ? 'SOL' : 'USDC',
-        status: 'pending',
-      });
-
-      const result = await waitForConfirmation(signature);
-
-      if (result.status === 'confirmed') {
-        updateRowStatus(row.id, { status: 'confirmed' });
-        await updateTxStatus(signature, 'confirmed');
-      } else if (result.status === 'failed') {
-        updateRowStatus(row.id, { status: 'failed', error: result.error || 'Failed' });
-        await updateTxStatus(signature, 'failed', result.error);
-      } else {
-        updateRowStatus(row.id, { status: 'sent', error: 'Confirmation pending' });
-      }
-    } catch (err: any) {
-      const { type, message } = categorizeError(err);
-      if (type === 'rejected') {
-        updateRowStatus(row.id, { status: 'queued', error: 'Cancelled' });
-      } else {
-        updateRowStatus(row.id, { status: 'failed', error: message });
-      }
-    }
-  };
-
-  // Execute NFT row
+  // Execute a single NFT row (NFTs still need individual transactions)
   const executeNftRow = async (row: NftRow): Promise<void> => {
     if (!publicKey || !row.isValid) return;
 
@@ -540,33 +542,143 @@ export default function BatchPayoutScreen() {
     }
   };
 
-  // Execute all rows sequentially
+  // Chunk an array into smaller arrays
+  const chunkArray = <T,>(arr: T[], size: number): T[][] => {
+    const chunks: T[][] = [];
+    for (let i = 0; i < arr.length; i += size) {
+      chunks.push(arr.slice(i, i + size));
+    }
+    return chunks;
+  };
+
+  // Execute token batch with chunking (1 approval per chunk)
+  const executeTokenBatch = async (tokenRowsToProcess: TokenRow[]) => {
+    if (!publicKey) return;
+
+    const chunkSize = tokenAsset === 'SOL' ? BATCH_CHUNK_SIZE_SOL : BATCH_CHUNK_SIZE_SPL;
+    const chunks = chunkArray(tokenRowsToProcess, chunkSize);
+
+    for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+      if (stopRequestedRef.current) break;
+
+      const chunk = chunks[chunkIdx];
+      setCurrentChunkIndex(chunkIdx);
+
+      // Mark all rows in chunk as sending
+      chunk.forEach(row => updateRowStatus(row.id, { status: 'sending' }));
+
+      try {
+        // Build transfers array
+        const transfers = chunk.map(row => ({
+          recipient: row.recipient,
+          amount: row.amount,
+          feeAmount: calculateFee(row.amount),
+        }));
+
+        // Build the transaction
+        let transaction;
+        if (tokenAsset === 'SOL') {
+          transaction = await buildBatchSolTransaction(publicKey, transfers as BatchSolTransfer[]);
+        } else {
+          const mint = getMintAddress();
+          transaction = await buildBatchSplTransaction(
+            publicKey,
+            mint,
+            transfers as BatchSplTransfer[],
+            tokenDecimals
+          );
+        }
+
+        // Send (single approval for this chunk)
+        const signatures = await sendBatchTransactions([transaction]);
+        const signature = signatures[0];
+
+        // Mark all rows as sent with the same signature
+        chunk.forEach(row => updateRowStatus(row.id, { status: 'sent', signature }));
+
+        // Add to tx history
+        for (const row of chunk) {
+          await addTxHistory({
+            signature,
+            from: publicKey,
+            to: row.recipient,
+            amount: row.amount,
+            currency: tokenAsset === 'SOL' ? 'SOL' : 'USDC',
+            status: 'pending',
+          });
+        }
+
+        // Wait for confirmation
+        const result = await waitForConfirmation(signature);
+
+        if (result.status === 'confirmed') {
+          chunk.forEach(row => {
+            updateRowStatus(row.id, { status: 'confirmed' });
+          });
+          await updateTxStatus(signature, 'confirmed');
+        } else if (result.status === 'failed') {
+          chunk.forEach(row => {
+            updateRowStatus(row.id, { status: 'failed', error: result.error || 'Failed' });
+          });
+          await updateTxStatus(signature, 'failed', result.error);
+        } else {
+          chunk.forEach(row => {
+            updateRowStatus(row.id, { status: 'sent', error: 'Confirmation pending' });
+          });
+        }
+      } catch (err: any) {
+        const { type, message } = categorizeError(err);
+        if (type === 'rejected') {
+          // User cancelled - mark chunk as queued so they can retry
+          chunk.forEach(row => updateRowStatus(row.id, { status: 'queued', error: 'Cancelled' }));
+          // Stop processing remaining chunks
+          break;
+        } else {
+          // Other error - mark as failed
+          chunk.forEach(row => updateRowStatus(row.id, { status: 'failed', error: message }));
+        }
+      }
+
+      // Small delay between chunks
+      if (chunkIdx < chunks.length - 1 && !stopRequestedRef.current) {
+        await new Promise(res => setTimeout(res, 500));
+      }
+    }
+  };
+
+  // Execute all rows
   const handleStartExecution = async () => {
     if (isExecutingRef.current) return;
     isExecutingRef.current = true;
     stopRequestedRef.current = false;
     setPhase('executing');
+    setCurrentChunkIndex(0);
 
     const queuedRows = rows.filter(r => r.status === 'queued');
 
-    for (let i = 0; i < queuedRows.length; i++) {
-      if (stopRequestedRef.current) break;
+    if (mode === 'NFT') {
+      // NFTs still process individually (each needs separate tx due to mixed SPL + SOL)
+      const nftQueuedRows = queuedRows.filter((r): r is NftRow => r.type === 'nft');
+      for (let i = 0; i < nftQueuedRows.length; i++) {
+        if (stopRequestedRef.current) break;
 
-      const row = queuedRows[i];
-      setCurrentRowIndex(i);
-      
-      if (row.type === 'token') {
-        await executeTokenRow(row);
-      } else {
+        const row = nftQueuedRows[i];
+        setCurrentRowIndex(i);
+        setCurrentChunkIndex(i);
         await executeNftRow(row);
-      }
 
-      if (i < queuedRows.length - 1 && !stopRequestedRef.current) {
-        await new Promise(res => setTimeout(res, 500));
+        if (i < nftQueuedRows.length - 1 && !stopRequestedRef.current) {
+          await new Promise(res => setTimeout(res, 500));
+        }
       }
+    } else {
+      // Token batch with chunking
+      const tokenQueuedRows = queuedRows.filter((r): r is TokenRow => r.type === 'token');
+      await executeTokenBatch(tokenQueuedRows);
     }
 
     setCurrentRowIndex(-1);
+    setCurrentChunkIndex(-1);
     isExecutingRef.current = false;
     setPhase('done');
   };
@@ -924,7 +1036,8 @@ export default function BatchPayoutScreen() {
 
   // ========== EXECUTING PHASE ==========
   if (phase === 'executing') {
-    const queuedRowsCount = rows.filter(r => r.status === 'queued').length;
+    const totalChunks = chunkInfo?.totalChunks ?? 1;
+    const sendingCount = rows.filter(r => r.status === 'sending').length;
     
     return (
       <>
@@ -933,15 +1046,25 @@ export default function BatchPayoutScreen() {
           <View style={styles.executingContent}>
             <ActivityIndicator size="large" color={COLORS.primary} />
             <Text style={styles.executingTitle}>Sending Payouts</Text>
-            <Text style={styles.executingProgress}>
-              {currentRowIndex + 1} of {queuedRowsCount + confirmedCount + failedCount}
-            </Text>
+            {totalChunks > 1 ? (
+              <Text style={styles.executingProgress}>
+                Chunk {Math.min(currentChunkIndex + 1, totalChunks)} of {totalChunks}
+              </Text>
+            ) : (
+              <Text style={styles.executingProgress}>
+                Processing {sendingCount > 0 ? sendingCount : validRows.length} transfers...
+              </Text>
+            )}
 
             <Card style={styles.statsCard}>
               <View style={styles.statsRow}>
                 <View style={styles.statItem}>
                   <Text style={styles.statValue}>{confirmedCount}</Text>
                   <Text style={[styles.statLabel, { color: COLORS.success }]}>Done</Text>
+                </View>
+                <View style={styles.statItem}>
+                  <Text style={styles.statValue}>{sendingCount}</Text>
+                  <Text style={[styles.statLabel, { color: COLORS.warning }]}>Sending</Text>
                 </View>
                 <View style={styles.statItem}>
                   <Text style={styles.statValue}>{queuedCount}</Text>
@@ -953,6 +1076,12 @@ export default function BatchPayoutScreen() {
                 </View>
               </View>
             </Card>
+
+            <Text style={styles.executingHint}>
+              {totalChunks > 1 
+                ? 'Stop will abort after current chunk completes'
+                : 'Transaction will complete all transfers'}
+            </Text>
 
             <Button
               title="Stop"
@@ -1024,6 +1153,28 @@ export default function BatchPayoutScreen() {
                 Fee wallet: {shortenAddress(FEE_WALLET, 4)}
               </Text>
             </Card>
+
+            {/* Approval info */}
+            {chunkInfo && (
+              <Card style={styles.approvalCard}>
+                <View style={styles.approvalHeader}>
+                  <Text style={styles.approvalIcon}>
+                    {chunkInfo.totalChunks === 1 ? '✨' : '📦'}
+                  </Text>
+                  <Text style={styles.approvalTitle}>
+                    {chunkInfo.totalChunks === 1 
+                      ? 'Single Approval'
+                      : `${chunkInfo.totalChunks} Approvals Required`}
+                  </Text>
+                </View>
+                <Text style={styles.approvalReason}>{chunkInfo.reason}</Text>
+                {chunkInfo.totalChunks > 1 && (
+                  <Text style={styles.approvalDetail}>
+                    {chunkInfo.chunkSize} transfers per transaction
+                  </Text>
+                )}
+              </Card>
+            )}
 
             {/* Balance check */}
             <Card style={styles.balanceCard}>
@@ -1555,8 +1706,17 @@ const styles = StyleSheet.create({
   // Executing phase
   executingContent: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: SPACING.xl },
   executingTitle: { ...TYPOGRAPHY.h2, color: COLORS.text, marginTop: SPACING.xl, marginBottom: SPACING.sm },
-  executingProgress: { ...TYPOGRAPHY.body, color: COLORS.textSecondary, marginBottom: SPACING['2xl'] },
+  executingProgress: { ...TYPOGRAPHY.body, color: COLORS.textSecondary, marginBottom: SPACING.lg },
+  executingHint: { ...TYPOGRAPHY.caption, color: COLORS.textMuted, textAlign: 'center', marginTop: SPACING.md },
   stopButton: { marginTop: SPACING['2xl'], minWidth: 150 },
+
+  // Approval info card
+  approvalCard: { marginBottom: SPACING.lg, backgroundColor: COLORS.primaryMuted, borderWidth: 1, borderColor: COLORS.primary },
+  approvalHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.xs },
+  approvalIcon: { fontSize: 18, marginRight: SPACING.sm },
+  approvalTitle: { ...TYPOGRAPHY.bodyMedium, color: COLORS.text },
+  approvalReason: { ...TYPOGRAPHY.small, color: COLORS.textSecondary },
+  approvalDetail: { ...TYPOGRAPHY.caption, color: COLORS.textMuted, marginTop: SPACING.xs },
 
   // Stats card
   statsCard: { marginBottom: SPACING.lg, width: '100%' },

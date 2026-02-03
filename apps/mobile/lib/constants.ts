@@ -71,6 +71,15 @@ export const isFeeConfigured = (): boolean => {
 // NFT Fee Configuration (flat SOL fee per NFT)
 export const NFT_FEE_SOL = parseFloat(process.env.EXPO_PUBLIC_NFT_FEE_SOL || '0.002');
 
+// ============================================
+// Batch Payout Chunking Limits
+// ============================================
+// Based on Solana tx size limit (1232 bytes) and compute limits (1.4M CU)
+// SOL: ~32 bytes per SystemProgram.transfer × 2 (recipient + fee) = ~64 bytes/row
+// SPL: larger due to potential ATA creation, ~150-200 bytes/row
+export const BATCH_CHUNK_SIZE_SOL = 12;  // Conservative for SOL transfers
+export const BATCH_CHUNK_SIZE_SPL = 5;   // Conservative for SPL (may need ATA creation)
+
 // Deep link scheme
 export const APP_SCHEME = 'spliter';
 

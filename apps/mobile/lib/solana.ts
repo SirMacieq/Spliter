@@ -2,6 +2,7 @@ import {
   Connection, 
   PublicKey, 
   Transaction,
+  TransactionInstruction,
   SystemProgram,
   LAMPORTS_PER_SOL,
   TransactionConfirmationStatus,
@@ -772,4 +773,249 @@ export const categorizeError = (error: any): { type: 'rejected' | 'network' | 'f
   }
   
   return { type: 'general', message: message || 'Transaction failed' };
+};
+
+// ============================================
+// Batch Transaction Building & Sending
+// ============================================
+
+export interface BatchSolTransfer {
+  recipient: string;
+  amount: number;    // SOL amount to recipient
+  feeAmount: number; // Fee amount to fee wallet
+}
+
+export interface BatchSplTransfer {
+  recipient: string;
+  amount: number;    // Token amount to recipient
+  feeAmount: number; // Fee amount to fee wallet
+}
+
+/**
+ * Build a single transaction with multiple SOL transfers (recipients + fees).
+ * All transfers packed into one tx for single approval.
+ */
+export const buildBatchSolTransaction = async (
+  fromWallet: string,
+  transfers: BatchSolTransfer[],
+): Promise<Transaction> => {
+  if (!isFeeConfigured()) {
+    throw new Error('Fee wallet not configured');
+  }
+
+  const connection = getConnection();
+  const fromPubkey = new PublicKey(fromWallet);
+  const feePubkey = new PublicKey(FEE_WALLET);
+  
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+  const transaction = new Transaction({
+    feePayer: fromPubkey,
+    blockhash,
+    lastValidBlockHeight,
+  });
+
+  for (const transfer of transfers) {
+    const toPubkey = new PublicKey(transfer.recipient);
+    
+    // Transfer to recipient
+    transaction.add(
+      SystemProgram.transfer({
+        fromPubkey,
+        toPubkey,
+        lamports: solToLamports(transfer.amount),
+      })
+    );
+    
+    // Transfer fee to fee wallet
+    transaction.add(
+      SystemProgram.transfer({
+        fromPubkey,
+        toPubkey: feePubkey,
+        lamports: solToLamports(transfer.feeAmount),
+      })
+    );
+  }
+
+  return transaction;
+};
+
+/**
+ * Check if an ATA exists. Returns true if exists, false otherwise.
+ */
+const ataExists = async (connection: Connection, ata: PublicKey): Promise<boolean> => {
+  try {
+    await getAccount(connection, ata);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Build a single transaction with multiple SPL token transfers (recipients + fees).
+ * Automatically creates ATAs where needed.
+ */
+export const buildBatchSplTransaction = async (
+  fromWallet: string,
+  mintAddress: string,
+  transfers: BatchSplTransfer[],
+  decimals: number,
+): Promise<Transaction> => {
+  if (!isFeeConfigured()) {
+    throw new Error('Fee wallet not configured');
+  }
+
+  const connection = getConnection();
+  const mint = new PublicKey(mintAddress);
+  const fromPubkey = new PublicKey(fromWallet);
+  const feePubkey = new PublicKey(FEE_WALLET);
+  
+  const fromAta = await getAssociatedTokenAddress(mint, fromPubkey);
+  const feeAta = await getAssociatedTokenAddress(mint, feePubkey);
+
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+  const transaction = new Transaction({
+    feePayer: fromPubkey,
+    blockhash,
+    lastValidBlockHeight,
+  });
+
+  // Track ATAs we've already added creation instructions for
+  const createdAtas = new Set<string>();
+
+  // Check if fee wallet ATA exists, create if needed (only once)
+  const feeAtaKey = feeAta.toBase58();
+  if (!(await ataExists(connection, feeAta))) {
+    transaction.add(
+      createAssociatedTokenAccountInstruction(fromPubkey, feeAta, feePubkey, mint)
+    );
+    createdAtas.add(feeAtaKey);
+  }
+
+  for (const transfer of transfers) {
+    const toPubkey = new PublicKey(transfer.recipient);
+    const toAta = await getAssociatedTokenAddress(mint, toPubkey);
+    const toAtaKey = toAta.toBase58();
+
+    // Create recipient ATA if needed (and not already added in this tx)
+    if (!createdAtas.has(toAtaKey) && !(await ataExists(connection, toAta))) {
+      transaction.add(
+        createAssociatedTokenAccountInstruction(fromPubkey, toAta, toPubkey, mint)
+      );
+      createdAtas.add(toAtaKey);
+    }
+
+    // Transfer to recipient
+    transaction.add(
+      createTransferInstruction(
+        fromAta,
+        toAta,
+        fromPubkey,
+        tokenToSmallestUnit(transfer.amount, decimals),
+        [],
+        TOKEN_PROGRAM_ID
+      )
+    );
+    
+    // Transfer fee
+    transaction.add(
+      createTransferInstruction(
+        fromAta,
+        feeAta,
+        fromPubkey,
+        tokenToSmallestUnit(transfer.feeAmount, decimals),
+        [],
+        TOKEN_PROGRAM_ID
+      )
+    );
+  }
+
+  return transaction;
+};
+
+/**
+ * Send multiple transactions in a single MWA session (one user approval).
+ * Returns array of signatures in same order as input transactions.
+ * Throws if user rejects or any tx fails to submit.
+ */
+export const sendBatchTransactions = async (
+  transactions: Transaction[],
+): Promise<string[]> => {
+  if (transactions.length === 0) {
+    return [];
+  }
+
+  const signatures = await transact(async (wallet: Web3MobileWallet) => {
+    await wallet.authorize({
+      cluster: getSolanaNetwork(),
+      identity: APP_IDENTITY,
+    });
+    
+    // signAndSendTransactions accepts array - single approval for all
+    const signedTxs = await wallet.signAndSendTransactions({
+      transactions,
+    });
+    
+    return signedTxs;
+  });
+  
+  return signatures;
+};
+
+/**
+ * Build and send batch SOL transfers in chunks.
+ * Each chunk is a single transaction, all chunks sent in one MWA session.
+ * Returns array of { signature, transferIndices } for each chunk.
+ */
+export const sendBatchSolTransfersChunked = async (
+  fromWallet: string,
+  transfers: BatchSolTransfer[],
+  chunkSize: number,
+): Promise<{ signatures: string[]; chunkMap: number[][] }> => {
+  const chunks: BatchSolTransfer[][] = [];
+  const chunkMap: number[][] = [];
+  
+  for (let i = 0; i < transfers.length; i += chunkSize) {
+    chunks.push(transfers.slice(i, i + chunkSize));
+    chunkMap.push(transfers.slice(i, i + chunkSize).map((_, j) => i + j));
+  }
+
+  const transactions: Transaction[] = [];
+  for (const chunk of chunks) {
+    const tx = await buildBatchSolTransaction(fromWallet, chunk);
+    transactions.push(tx);
+  }
+
+  const signatures = await sendBatchTransactions(transactions);
+  return { signatures, chunkMap };
+};
+
+/**
+ * Build and send batch SPL transfers in chunks.
+ * Each chunk is a single transaction, all chunks sent in one MWA session.
+ * Returns array of { signature, transferIndices } for each chunk.
+ */
+export const sendBatchSplTransfersChunked = async (
+  fromWallet: string,
+  mintAddress: string,
+  transfers: BatchSplTransfer[],
+  decimals: number,
+  chunkSize: number,
+): Promise<{ signatures: string[]; chunkMap: number[][] }> => {
+  const chunks: BatchSplTransfer[][] = [];
+  const chunkMap: number[][] = [];
+  
+  for (let i = 0; i < transfers.length; i += chunkSize) {
+    chunks.push(transfers.slice(i, i + chunkSize));
+    chunkMap.push(transfers.slice(i, i + chunkSize).map((_, j) => i + j));
+  }
+
+  const transactions: Transaction[] = [];
+  for (const chunk of chunks) {
+    const tx = await buildBatchSplTransaction(fromWallet, mintAddress, chunk, decimals);
+    transactions.push(tx);
+  }
+
+  const signatures = await sendBatchTransactions(transactions);
+  return { signatures, chunkMap };
 };
