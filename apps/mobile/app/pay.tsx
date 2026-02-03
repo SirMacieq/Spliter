@@ -78,17 +78,31 @@ export default function PayScreen() {
   const totalAmount = params ? params.amount + feeAmount : 0;
   
   const loadBalances = useCallback(async () => {
-    if (!publicKey) return;
+    if (!publicKey) {
+      // No wallet - can't load balances, but don't block UI
+      setStatus('idle');
+      return;
+    }
     
     setStatus('loading-balance');
     setError('');
     setErrorType(null);
     
+    // Timeout wrapper to prevent infinite loading
+    const timeoutMs = 15000;
+    const timeoutPromise = new Promise<never>((_, reject) => 
+      setTimeout(() => reject(new Error('Balance fetch timeout')), timeoutMs)
+    );
+    
     try {
-      const [usdc, sol] = await Promise.all([
-        getUsdcBalance(publicKey),
-        getSolBalance(publicKey),
-      ]);
+      const [usdc, sol] = await Promise.race([
+        Promise.all([
+          getUsdcBalance(publicKey),
+          getSolBalance(publicKey),
+        ]),
+        timeoutPromise,
+      ]) as [number, number];
+      
       setUsdcBalance(usdc);
       setSolBalance(sol);
       
@@ -96,12 +110,20 @@ export default function PayScreen() {
         setError(`You need about ${MIN_SOL_FOR_FEES} SOL for network fees`);
         setErrorType('fee');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load balances:', err);
-      setError('Unable to load balances. Check your connection.');
+      const isTimeout = err?.message?.includes('timeout');
+      setError(isTimeout 
+        ? 'Balance loading timed out. Tap Refresh to retry.' 
+        : 'Unable to load balances. Check your connection.');
       setErrorType('network');
+      // Set balances to 0 so UI can proceed (user can refresh)
+      setUsdcBalance(0);
+      setSolBalance(0);
+    } finally {
+      // Always exit loading state
+      setStatus('idle');
     }
-    setStatus('idle');
   }, [publicKey]);
   
   useEffect(() => {
@@ -715,9 +737,10 @@ export default function PayScreen() {
         
         <View style={styles.footer}>
           <Button
-            title="Continue to Pay"
+            title={status === 'loading-balance' ? 'Loading...' : 'Continue to Pay'}
             onPress={handleProceedToConfirm}
-            disabled={status === 'loading-balance' || (solBalance !== null && solBalance < MIN_SOL_FOR_FEES)}
+            disabled={status === 'loading-balance' || solBalance === null || solBalance < MIN_SOL_FOR_FEES}
+            loading={status === 'loading-balance'}
             size="large"
             fullWidth
           />

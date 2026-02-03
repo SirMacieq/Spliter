@@ -38,14 +38,13 @@ export default function ToolsHubScreen() {
   const router = useRouter();
 
   const handleBatchToken = () => {
-    // Go to batch screen - it defaults to TOKEN mode
-    router.push('/tools/batch' as any);
+    // Go to batch screen locked to TOKEN mode
+    router.push('/tools/batch?mode=TOKEN' as any);
   };
 
   const handleBatchNft = () => {
-    // Go to batch screen - user can switch to NFT mode there
-    // In future: pass mode param
-    router.push('/tools/batch' as any);
+    // Go to batch screen locked to NFT mode
+    router.push('/tools/batch?mode=NFT' as any);
   };
 
   return (

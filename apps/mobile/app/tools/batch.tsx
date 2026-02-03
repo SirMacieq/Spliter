@@ -27,7 +27,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter, Stack } from 'expo-router';
+import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 import { useWalletPublicKey } from '../../stores/walletStore';
 import { useGroupStore } from '../../stores/groupStore';
 import { Button, Card, NetworkBadge, SectionHeader } from '../../components';
@@ -141,12 +141,14 @@ const clearBatchDraft = async (): Promise<void> => {
 
 export default function BatchPayoutScreen() {
   const router = useRouter();
+  const { mode: urlMode } = useLocalSearchParams<{ mode?: string }>();
   const publicKey = useWalletPublicKey();
   const addTxHistory = useGroupStore((state) => state.addTxHistory);
   const updateTxStatus = useGroupStore((state) => state.updateTxStatus);
 
-  // Mode
-  const [mode, setMode] = useState<BatchMode>('TOKEN');
+  // Mode - locked if passed via URL, otherwise toggleable
+  const lockedMode: BatchMode | null = (urlMode === 'TOKEN' || urlMode === 'NFT') ? urlMode : null;
+  const [mode, setMode] = useState<BatchMode>(lockedMode || 'TOKEN');
   
   // Token settings
   const [tokenAsset, setTokenAsset] = useState<TokenAsset>('USDC');
@@ -1082,33 +1084,41 @@ export default function BatchPayoutScreen() {
         <ScrollView style={styles.scrollContent} keyboardShouldPersistTaps="handled">
           {/* Header */}
           <View style={styles.inputHeader}>
-            <Text style={styles.inputEmoji}>📦</Text>
-            <Text style={styles.inputTitle}>Batch Payout</Text>
+            <Text style={styles.inputEmoji}>{mode === 'TOKEN' ? '💰' : '🖼️'}</Text>
+            <Text style={styles.inputTitle}>
+              {mode === 'TOKEN' ? 'Batch Token Payout' : 'Batch NFT Transfer'}
+            </Text>
             <Text style={styles.inputSubtitle}>
-              Send to multiple recipients at once
+              {mode === 'TOKEN' 
+                ? 'Send tokens to multiple recipients' 
+                : 'Transfer NFTs to multiple recipients'}
             </Text>
           </View>
 
-          {/* Mode Toggle */}
-          <SectionHeader title="Batch Type" />
-          <View style={styles.modeToggle}>
-            <TouchableOpacity
-              style={[styles.modeOption, mode === 'TOKEN' && styles.modeOptionActive]}
-              onPress={() => { setMode('TOKEN'); setRows([]); }}
-            >
-              <Text style={[styles.modeText, mode === 'TOKEN' && styles.modeTextActive]}>
-                💰 Tokens
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.modeOption, mode === 'NFT' && styles.modeOptionActive]}
-              onPress={() => { setMode('NFT'); setRows([]); }}
-            >
-              <Text style={[styles.modeText, mode === 'NFT' && styles.modeTextActive]}>
-                🖼️ NFTs
-              </Text>
-            </TouchableOpacity>
-          </View>
+          {/* Mode Toggle - only show if not locked via URL */}
+          {!lockedMode && (
+            <>
+              <SectionHeader title="Batch Type" />
+              <View style={styles.modeToggle}>
+                <TouchableOpacity
+                  style={[styles.modeOption, mode === 'TOKEN' && styles.modeOptionActive]}
+                  onPress={() => { setMode('TOKEN'); setRows([]); }}
+                >
+                  <Text style={[styles.modeText, mode === 'TOKEN' && styles.modeTextActive]}>
+                    💰 Tokens
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modeOption, mode === 'NFT' && styles.modeOptionActive]}
+                  onPress={() => { setMode('NFT'); setRows([]); }}
+                >
+                  <Text style={[styles.modeText, mode === 'NFT' && styles.modeTextActive]}>
+                    🖼️ NFTs
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
 
           {/* Token Asset Selection */}
           {mode === 'TOKEN' && (

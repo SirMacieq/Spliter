@@ -97,7 +97,7 @@ export default function HomeScreen() {
         {/* Primary Actions */}
         <View style={styles.primaryActions}>
           <PrimaryAction
-            icon={<SpliterLogo size={28} />}
+            icon={<Text style={styles.primaryIconEmoji}>🔗</Text>}
             title="Split & Request"
             description="Create payment links & QR codes to request money"
             accentColor={COLORS.primary}
