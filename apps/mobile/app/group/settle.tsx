@@ -41,6 +41,7 @@ import {
   categorizeError,
 } from '../../lib/solana';
 import { SettleStatus, SettleErrorType } from '../../lib/types';
+import { withTimeout, isTimeoutError } from '../../lib/timeout';
 
 type Currency = 'USDC' | 'SOL';
 
@@ -68,6 +69,7 @@ export default function SettleScreen() {
   
   const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
   const [solBalance, setSolBalance] = useState<number | null>(null);
+  const [balanceFetchFailed, setBalanceFetchFailed] = useState(false);
   
   const isSendingRef = useRef(false);
   
@@ -80,17 +82,25 @@ export default function SettleScreen() {
   const parsedAmount = parseFloat(amount) || 0;
   
   const loadBalances = useCallback(async () => {
-    if (!publicKey) return;
+    if (!publicKey) {
+      setStatus('idle');
+      return;
+    }
     
     setStatus('loading-balance');
     setError('');
     setErrorType(null);
+    setBalanceFetchFailed(false);
     
     try {
-      const [usdc, sol] = await Promise.all([
-        getUsdcBalance(publicKey),
-        getSolBalance(publicKey),
-      ]);
+      const [usdc, sol] = await withTimeout(
+        () => Promise.all([
+          getUsdcBalance(publicKey),
+          getSolBalance(publicKey),
+        ]),
+        15000,
+        'Balance fetch timed out'
+      );
       setUsdcBalance(usdc);
       setSolBalance(sol);
       
@@ -98,12 +108,18 @@ export default function SettleScreen() {
         setError(`You need about ${MIN_SOL_FOR_FEES} SOL to cover transaction fees`);
         setErrorType('fee');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load balances:', err);
-      setError('Unable to load balances. Please check your connection.');
+      setBalanceFetchFailed(true);
+      if (isTimeoutError(err)) {
+        setError('Balance loading timed out. You can still try to settle.');
+      } else {
+        setError('Unable to load balances. You can still try to settle.');
+      }
       setErrorType('network');
+    } finally {
+      setStatus('idle');
     }
-    setStatus('idle');
   }, [publicKey]);
   
   useEffect(() => {

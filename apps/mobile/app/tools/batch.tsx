@@ -61,6 +61,7 @@ import {
   categorizeError,
 } from '../../lib/solana';
 import { isValidSolanaAddress, shortenAddress } from '../../lib/validation';
+import { withTimeout } from '../../lib/timeout';
 
 // ============================================
 // Types
@@ -251,15 +252,27 @@ export default function BatchPayoutScreen() {
     if (!publicKey) return;
     setIsLoadingBalances(true);
     try {
-      const sol = await getSolBalance(publicKey);
+      const sol = await withTimeout(
+        () => getSolBalance(publicKey),
+        15000,
+        'Balance fetch timed out'
+      );
       setSolBalance(sol);
 
       if (mode === 'TOKEN' && tokenAsset !== 'SOL') {
         const mint = getMintAddress();
         if (mint && isValidSolanaAddress(mint)) {
-          const decimals = await getTokenDecimals(mint);
+          const decimals = await withTimeout(
+            () => getTokenDecimals(mint),
+            10000,
+            'Token info fetch timed out'
+          );
           setTokenDecimals(decimals);
-          const balance = await getTokenBalance(publicKey, mint);
+          const balance = await withTimeout(
+            () => getTokenBalance(publicKey, mint),
+            15000,
+            'Token balance fetch timed out'
+          );
           setTokenBalance(balance);
         } else {
           setTokenBalance(null);
@@ -267,8 +280,10 @@ export default function BatchPayoutScreen() {
       }
     } catch (err) {
       console.error('Failed to load balances:', err);
+      // Don't block UI - batch can still proceed
+    } finally {
+      setIsLoadingBalances(false);
     }
-    setIsLoadingBalances(false);
   }, [publicKey, mode, tokenAsset, customMint]);
 
   useEffect(() => {

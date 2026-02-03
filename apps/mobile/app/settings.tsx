@@ -24,6 +24,7 @@ import {
   SolanaNetwork,
 } from '../lib/constants';
 import { getSolBalance, getUsdcBalance, getAccountExplorerUrl } from '../lib/solana';
+import { withTimeout } from '../lib/timeout';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -47,16 +48,22 @@ export default function SettingsScreen() {
     
     setIsLoadingBalance(true);
     try {
-      const [sol, usdc] = await Promise.all([
-        getSolBalance(publicKey),
-        getUsdcBalance(publicKey),
-      ]);
+      const [sol, usdc] = await withTimeout(
+        () => Promise.all([
+          getSolBalance(publicKey),
+          getUsdcBalance(publicKey),
+        ]),
+        15000,
+        'Balance fetch timed out'
+      );
       setSolBalance(sol);
       setUsdcBalance(usdc);
     } catch (err) {
       console.error('Failed to load balances:', err);
+      // Don't block UI - just show null balances
+    } finally {
+      setIsLoadingBalance(false);
     }
-    setIsLoadingBalance(false);
   }, [publicKey]);
   
   useEffect(() => {

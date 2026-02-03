@@ -38,6 +38,7 @@ import {
 } from '../lib/solana';
 import { validatePayLinkParams, PayLinkParams, shortenAddress } from '../lib/validation';
 import { SettleStatus, SettleErrorType } from '../lib/types';
+import { withTimeout, isTimeoutError } from '../lib/timeout';
 
 export default function PayScreen() {
   const router = useRouter();
@@ -66,6 +67,7 @@ export default function PayScreen() {
   
   const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
   const [solBalance, setSolBalance] = useState<number | null>(null);
+  const [balanceFetchFailed, setBalanceFetchFailed] = useState(false);
   
   const isSendingRef = useRef(false);
   
@@ -87,21 +89,17 @@ export default function PayScreen() {
     setStatus('loading-balance');
     setError('');
     setErrorType(null);
-    
-    // Timeout wrapper to prevent infinite loading
-    const timeoutMs = 15000;
-    const timeoutPromise = new Promise<never>((_, reject) => 
-      setTimeout(() => reject(new Error('Balance fetch timeout')), timeoutMs)
-    );
+    setBalanceFetchFailed(false);
     
     try {
-      const [usdc, sol] = await Promise.race([
-        Promise.all([
+      const [usdc, sol] = await withTimeout(
+        () => Promise.all([
           getUsdcBalance(publicKey),
           getSolBalance(publicKey),
         ]),
-        timeoutPromise,
-      ]) as [number, number];
+        15000,
+        'Balance fetch timed out'
+      );
       
       setUsdcBalance(usdc);
       setSolBalance(sol);
@@ -112,14 +110,15 @@ export default function PayScreen() {
       }
     } catch (err: any) {
       console.error('Failed to load balances:', err);
-      const isTimeout = err?.message?.includes('timeout');
-      setError(isTimeout 
-        ? 'Balance loading timed out. Tap Refresh to retry.' 
-        : 'Unable to load balances. Check your connection.');
+      setBalanceFetchFailed(true);
+      
+      if (isTimeoutError(err)) {
+        setError('Balance loading timed out. You can still try to pay.');
+      } else {
+        setError('Unable to load balances. You can still try to pay.');
+      }
       setErrorType('network');
-      // Set balances to 0 so UI can proceed (user can refresh)
-      setUsdcBalance(0);
-      setSolBalance(0);
+      // Don't set fake balances - keep them null to show we couldn't fetch
     } finally {
       // Always exit loading state
       setStatus('idle');
@@ -139,13 +138,19 @@ export default function PayScreen() {
       return false;
     }
     
+    if (!params) return false;
+    
+    // If balance fetch failed, allow proceeding (user chose "Pay anyway")
+    if (balanceFetchFailed) {
+      return true;
+    }
+    
+    // Balance checks only if we successfully fetched balances
     if (solBalance !== null && solBalance < MIN_SOL_FOR_FEES) {
       setError(`You need about ${MIN_SOL_FOR_FEES} SOL for network fees`);
       setErrorType('fee');
       return false;
     }
-    
-    if (!params) return false;
     
     if (params.currency === 'USDC') {
       if (usdcBalance === null || usdcBalance === 0) {
@@ -699,6 +704,13 @@ export default function PayScreen() {
           <View style={styles.balanceRow}>
             {status === 'loading-balance' ? (
               <ActivityIndicator color={COLORS.textSecondary} size="small" />
+            ) : balanceFetchFailed ? (
+              <>
+                <Text style={styles.balanceTextError}>Balance unavailable</Text>
+                <TouchableOpacity onPress={loadBalances}>
+                  <Text style={styles.refreshText}>Retry</Text>
+                </TouchableOpacity>
+              </>
             ) : (
               <>
                 <Text style={styles.balanceText}>
@@ -714,8 +726,17 @@ export default function PayScreen() {
             )}
           </View>
           
-          {/* Low SOL Warning */}
-          {solBalance !== null && solBalance < MIN_SOL_FOR_FEES && (
+          {/* Balance fetch error - show warning but allow proceed */}
+          {balanceFetchFailed && (
+            <View style={styles.warningBanner}>
+              <Text style={styles.warningBannerText}>
+                ⚠️ Couldn't verify your balance. You can still try to pay.
+              </Text>
+            </View>
+          )}
+          
+          {/* Low SOL Warning - only show if balances loaded successfully */}
+          {!balanceFetchFailed && solBalance !== null && solBalance < MIN_SOL_FOR_FEES && (
             <View style={styles.warningBanner}>
               <Text style={styles.warningBannerText}>
                 ⚠️ Low SOL! You need ~{MIN_SOL_FOR_FEES} SOL for fees.
@@ -728,7 +749,7 @@ export default function PayScreen() {
             </View>
           )}
           
-          {error && errorType !== 'fee' && (
+          {error && errorType !== 'fee' && !balanceFetchFailed && (
             <Text style={styles.formError}>{error}</Text>
           )}
           
@@ -737,9 +758,18 @@ export default function PayScreen() {
         
         <View style={styles.footer}>
           <Button
-            title={status === 'loading-balance' ? 'Loading...' : 'Continue to Pay'}
+            title={
+              status === 'loading-balance' 
+                ? 'Loading...' 
+                : balanceFetchFailed 
+                  ? 'Pay Anyway' 
+                  : 'Continue to Pay'
+            }
             onPress={handleProceedToConfirm}
-            disabled={status === 'loading-balance' || solBalance === null || solBalance < MIN_SOL_FOR_FEES}
+            disabled={
+              status === 'loading-balance' || 
+              (!balanceFetchFailed && (solBalance === null || solBalance < MIN_SOL_FOR_FEES))
+            }
             loading={status === 'loading-balance'}
             size="large"
             fullWidth
@@ -876,6 +906,10 @@ const styles = StyleSheet.create({
   balanceText: { 
     ...TYPOGRAPHY.small,
     color: COLORS.textSecondary,
+  },
+  balanceTextError: { 
+    ...TYPOGRAPHY.small,
+    color: COLORS.warning,
   },
   refreshText: { 
     ...TYPOGRAPHY.smallMedium,
