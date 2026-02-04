@@ -6,7 +6,7 @@ import {
 } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
 import { PublicKey } from '@solana/web3.js';
 import { useWalletStore } from '../stores/walletStore';
-import { APP_NAME, getSolanaNetwork } from '../lib/constants';
+import { APP_NAME, getAppNetwork, APP_NETWORK } from '../lib/constants';
 
 const APP_IDENTITY = {
   name: APP_NAME,
@@ -26,17 +26,31 @@ export const useWalletConnection = () => {
     const sessionId = generateSessionId();
     lastSessionId.current = sessionId;
     
+    // ALWAYS use APP_NETWORK - this is the single source of truth
+    const requestedCluster = getAppNetwork();
+    
+    // Invariant check - this should NEVER fail
+    if (requestedCluster !== APP_NETWORK) {
+      console.error('[wallet][connect] INVARIANT VIOLATION: getAppNetwork() !== APP_NETWORK', {
+        getAppNetwork: requestedCluster,
+        APP_NETWORK,
+      });
+    }
+    
     console.log('[wallet][connect] START', { 
       sessionId, 
-      cluster: getSolanaNetwork(),
+      requestedCluster,
+      appNetwork: APP_NETWORK,
+      envNetwork: process.env.EXPO_PUBLIC_SOLANA_NETWORK,
     });
     
     setConnecting();
     
     try {
       await transact(async (wallet: Web3MobileWallet) => {
+        // ALWAYS request APP_NETWORK cluster from wallet
         const authResult = await wallet.authorize({
-          cluster: getSolanaNetwork(),
+          cluster: APP_NETWORK, // Use constant directly for absolute certainty
           identity: APP_IDENTITY,
         });
         
@@ -44,6 +58,7 @@ export const useWalletConnection = () => {
         const accounts = authResult.accounts || [];
         console.log('[wallet][authorize] RESULT', {
           sessionId,
+          requestedCluster: APP_NETWORK,
           walletUriBase: authResult.wallet_uri_base,
           accountCount: accounts.length,
           accounts: accounts.map((acc, i) => ({
@@ -93,7 +108,8 @@ export const useWalletConnection = () => {
 
         const pubkeyStr = publicKey.toBase58();
         console.log('[wallet][connect] SUCCESS', { 
-          sessionId, 
+          sessionId,
+          requestedCluster: APP_NETWORK,
           publicKey: `${pubkeyStr.slice(0, 8)}...${pubkeyStr.slice(-4)}`,
           fullKey: pubkeyStr,
           accountIndex: 0,
@@ -103,18 +119,27 @@ export const useWalletConnection = () => {
         setConnected(pubkeyStr);
       });
     } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorName = error instanceof Error ? error.name : 'Unknown';
+      
       console.error('[wallet][connect] ERROR', { 
-        sessionId, 
-        error: error instanceof Error ? error.message : String(error),
+        sessionId,
+        requestedCluster: APP_NETWORK,
+        errorName,
+        error: errorMessage,
       });
       
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('User rejected') || message.includes('cancelled') || message.includes('Cancelled')) {
+      // Categorize the error
+      if (errorMessage.includes('User rejected') || 
+          errorMessage.includes('cancelled') || 
+          errorMessage.includes('Cancelled')) {
         setError('Connection cancelled');
-      } else if (message.includes('No wallet')) {
+      } else if (errorMessage.includes('No wallet')) {
         setError('No wallet app found. Install Phantom or Solflare.');
+      } else if (errorMessage.includes('TimeoutException') || errorMessage.includes('timeout')) {
+        setError('Wallet didn\'t respond. Please re-open your wallet and try again.');
       } else {
-        setError(message || 'Failed to connect wallet');
+        setError(errorMessage || 'Failed to connect wallet');
       }
       
       setTimeout(() => setDisconnected(), 3000);
@@ -145,7 +170,7 @@ export const useWalletConnection = () => {
   
   // Force reconnect - disconnect then immediately connect
   const reconnect = useCallback(async () => {
-    console.log('[wallet][reconnect] START');
+    console.log('[wallet][reconnect] START', { appNetwork: APP_NETWORK });
     await disconnect({ clearAuth: true });
     // Small delay to ensure state is cleared
     await new Promise(r => setTimeout(r, 100));

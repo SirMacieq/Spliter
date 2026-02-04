@@ -22,7 +22,8 @@ import {
   MIN_SOL_FOR_FEES, 
   getFaucetUrl, 
   getNetworkName,
-  getSolanaNetwork,
+  getAppNetwork,
+  APP_NETWORK,
   getSolanaRpcUrl,
   FEE_PERCENT,
   FEE_WALLET,
@@ -122,19 +123,24 @@ export default function PayScreen() {
     setPaymentError(null);
     setBalanceFetchFailed(false);
     
-    // Capture diagnostic info
+    // Capture diagnostic info - ALWAYS use APP_NETWORK
     const payerPubkey = publicKey;
     const toPubkey = params?.to || '';
     const rpcUrl = getSolanaRpcUrl();
-    const network = getSolanaNetwork();
+    const network = APP_NETWORK; // Single source of truth
+    
+    // Invariant check
+    if (getAppNetwork() !== APP_NETWORK) {
+      console.error('[pay][balances] INVARIANT VIOLATION: getAppNetwork() !== APP_NETWORK');
+    }
     
     console.log('[pay][balances] START', {
-      payerPubkey,
-      toPubkey,
+      payerPubkey: `${payerPubkey.slice(0, 8)}...${payerPubkey.slice(-4)}`,
+      toPubkey: toPubkey ? `${toPubkey.slice(0, 8)}...${toPubkey.slice(-4)}` : 'none',
       rpcUrl,
       network,
+      appNetwork: APP_NETWORK,
       envNetwork: process.env.EXPO_PUBLIC_SOLANA_NETWORK,
-      envRpc: process.env.EXPO_PUBLIC_SOLANA_RPC_URL,
     });
     
     try {
@@ -166,13 +172,10 @@ export default function PayScreen() {
       
       // Log detailed diagnostic info
       console.log('[pay][balances] RESULT', {
-        payerPubkey,
-        toPubkey,
-        rpcUrl,
+        payer: `${payerPubkey.slice(0, 8)}...`,
         network,
-        payerBalLamports,
+        appNetwork: APP_NETWORK,
         payerBalSOL: payerBalLamports / LAMPORTS_PER_SOL,
-        toBalLamports,
         toBalSOL: toBalLamports / LAMPORTS_PER_SOL,
       });
       
@@ -321,7 +324,7 @@ export default function PayScreen() {
     }
     
     const attemptId = ++sendAttemptRef.current;
-    const network = getSolanaNetwork();
+    const network = APP_NETWORK; // Single source of truth
     
     console.log('[pay][send] START', {
       attemptId,
@@ -330,6 +333,7 @@ export default function PayScreen() {
       amount: params.amount,
       currency: params.currency,
       network,
+      appNetwork: APP_NETWORK,
       rpc: getSolanaRpcUrl(),
     });
     
@@ -731,7 +735,7 @@ export default function PayScreen() {
                 <Text style={styles.networkMismatchLabel}>This app requires:</Text>
                 <View style={styles.networkMismatchBadge}>
                   <Text style={styles.networkMismatchBadgeText}>
-                    {getSolanaNetwork() === 'mainnet-beta' ? '🟢 Mainnet' : '🟡 Devnet'}
+                    {APP_NETWORK === 'mainnet-beta' ? '🟢 Mainnet' : '🟡 Devnet'}
                   </Text>
                 </View>
               </View>

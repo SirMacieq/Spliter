@@ -5,7 +5,7 @@
  * for user-facing error messages.
  */
 
-import { getSolanaNetwork } from './constants';
+import { APP_NETWORK } from './constants';
 
 // ============================================
 // Error Types
@@ -40,31 +40,56 @@ export interface PaymentError {
 // ============================================
 
 /**
+ * Check if error is a timeout from wallet (not network mismatch)
+ */
+function isWalletTimeout(error: any): boolean {
+  const message = String(error?.message ?? error ?? '').toLowerCase();
+  return message.includes('timeoutexception') || 
+         (message.includes('timeout') && message.includes('wallet'));
+}
+
+/**
  * Heuristics to detect if error might be caused by wallet network mismatch.
  * 
- * Common indicators:
- * - CancellationException after wallet showed network warning
- * - Transaction simulation fails with account-not-found on mainnet (devnet account)
- * - Blockhash mismatch (different chain)
+ * IMPORTANT: We now require STRONG evidence of mismatch, not just CancellationException.
+ * CancellationException alone could just mean user dismissed the wallet.
+ * 
+ * Strong indicators:
+ * - Account doesn't exist on this cluster (devnet account queried on mainnet)
+ * - Simulation fails with specific account errors
+ * - Blockhash from wrong chain
  */
 function isLikelyNetworkMismatch(error: any): boolean {
   const message = String(error?.message ?? error ?? '').toLowerCase();
   
-  // CancellationException often happens when user dismisses network warning
-  if (message.includes('cancellationexception')) {
-    return true;
+  // Timeout is NOT network mismatch
+  if (isWalletTimeout(error)) {
+    return false;
   }
   
-  // Account doesn't exist on this cluster
+  // Account doesn't exist on this cluster - STRONG indicator
   if (message.includes('account not found') || 
       message.includes('could not find account') ||
       message.includes('invalid account data')) {
     return true;
   }
   
-  // Simulation with wrong accounts
+  // Simulation with wrong accounts - STRONG indicator
   if (message.includes('simulation failed') && 
       (message.includes('account') || message.includes('owner'))) {
+    return true;
+  }
+  
+  // Blockhash issues could indicate wrong chain
+  if (message.includes('blockhash not found') && 
+      !message.includes('expired')) {
+    return true;
+  }
+  
+  // CancellationException ALONE is NOT enough - could be user dismissal
+  // Only treat as mismatch if combined with network-related keywords
+  if (message.includes('cancellationexception') && 
+      (message.includes('network') || message.includes('cluster'))) {
     return true;
   }
   
@@ -100,16 +125,36 @@ export function createNetworkMismatchError(expectedNetwork: string, walletNetwor
  */
 export function categorizePaymentError(error: any): PaymentError {
   const message = String(error?.message ?? error ?? '').toLowerCase();
-  const expectedNetwork = getSolanaNetwork();
+  const expectedNetwork = APP_NETWORK;
   
   // Check for RpcError (from our rpc.ts)
   if (error?.name === 'RpcError') {
     return handleRpcError(error);
   }
   
-  // Check for likely network mismatch FIRST (before generic cancelled check)
+  // Check for wallet timeout FIRST (before mismatch or cancelled)
+  if (isWalletTimeout(error)) {
+    return {
+      type: 'wallet_unavailable',
+      message: 'Wallet didn\'t respond in time',
+      recoverable: true,
+      userAction: 'Re-open your wallet app and try again',
+    };
+  }
+  
+  // Check for likely network mismatch (before generic cancelled check)
   if (isLikelyNetworkMismatch(error)) {
     return createNetworkMismatchError(expectedNetwork);
+  }
+  
+  // CancellationException without network evidence = user dismissed
+  if (message.includes('cancellationexception')) {
+    return {
+      type: 'wallet_rejected',
+      message: 'Wallet request was dismissed',
+      recoverable: true,
+      userAction: 'Re-open wallet and approve the transaction',
+    };
   }
   
   // Wallet rejected / cancelled

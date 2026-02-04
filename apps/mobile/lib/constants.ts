@@ -5,21 +5,31 @@
 export const APP_NAME = 'Spliter';
 export const APP_VERSION = '1.0.0';
 
-// Solana Network Configuration
+// ============================================
+// NETWORK CONFIGURATION - SINGLE SOURCE OF TRUTH
+// ============================================
+
 export type SolanaNetwork = 'mainnet-beta' | 'devnet';
 
-// Network config - read from env, default to mainnet-beta for production safety
-// EXPO_PUBLIC_SOLANA_NETWORK controls which network we use
-const envNetwork = process.env.EXPO_PUBLIC_SOLANA_NETWORK;
-let currentNetwork: SolanaNetwork = 
-  envNetwork === 'devnet' ? 'devnet' : 'mainnet-beta';
+/**
+ * APP_NETWORK: The ONLY network this build uses.
+ * 
+ * This is determined at build time from env and NEVER changes at runtime.
+ * All MWA authorize calls and RPC calls MUST use this value.
+ * 
+ * To build for devnet: set EXPO_PUBLIC_SOLANA_NETWORK=devnet in .env
+ * Default: mainnet-beta (safe for production)
+ */
+const ENV_NETWORK = process.env.EXPO_PUBLIC_SOLANA_NETWORK;
+export const APP_NETWORK: SolanaNetwork = 
+  ENV_NETWORK === 'devnet' ? 'devnet' : 'mainnet-beta';
 
-// Log at module load time for debugging
-console.log('[constants] Network initialized:', {
-  envNetwork,
-  currentNetwork,
-  envRpc: process.env.EXPO_PUBLIC_SOLANA_RPC_URL,
-});
+// Log once at module load - this should NEVER change after this
+console.log('[constants] APP_NETWORK (immutable):', APP_NETWORK, '| env:', ENV_NETWORK);
+
+// ============================================
+// Network Configuration
+// ============================================
 
 export const NETWORK_CONFIG = {
   'mainnet-beta': {
@@ -38,30 +48,63 @@ export const NETWORK_CONFIG = {
   },
 } as const;
 
-// Getters for current network config
-export const getSolanaNetwork = (): SolanaNetwork => currentNetwork;
-export const setSolanaNetwork = (network: SolanaNetwork) => { 
-  console.log('[constants] Network changed:', currentNetwork, '->', network);
-  currentNetwork = network; 
-};
+// ============================================
+// Network Getters - ALL use APP_NETWORK
+// ============================================
 
-export const getNetworkConfig = () => NETWORK_CONFIG[currentNetwork];
-export const getSolanaRpcUrl = () => {
-  // Prefer explicit env RPC URL over network default
+/**
+ * Get the app's network. ALWAYS returns APP_NETWORK.
+ * This is the ONLY function that should be used for network selection.
+ */
+export const getAppNetwork = (): SolanaNetwork => APP_NETWORK;
+
+/**
+ * @deprecated Use getAppNetwork() instead. This exists for backwards compatibility.
+ */
+export const getSolanaNetwork = (): SolanaNetwork => APP_NETWORK;
+
+/**
+ * Get network config for APP_NETWORK.
+ */
+export const getNetworkConfig = () => NETWORK_CONFIG[APP_NETWORK];
+
+/**
+ * Get RPC URL for APP_NETWORK.
+ * Prefers explicit env RPC URL over network default.
+ */
+export const getSolanaRpcUrl = (): string => {
   const envRpc = process.env.EXPO_PUBLIC_SOLANA_RPC_URL;
   if (envRpc && envRpc.startsWith('http')) {
     return envRpc;
   }
   return getNetworkConfig().rpcUrl;
 };
+
 export const getCurrentUsdcMint = () => getNetworkConfig().usdcMint;
 export const getExplorerBaseUrl = () => getNetworkConfig().explorerUrl;
 export const getFaucetUrl = () => getNetworkConfig().faucetUrl;
 export const getNetworkName = () => getNetworkConfig().name;
 
-// Legacy exports for compatibility
-export const SOLANA_NETWORK = currentNetwork;
-export const SOLANA_RPC_URL = getSolanaRpcUrl();
+// ============================================
+// DEPRECATED - Network mutation is disabled
+// ============================================
+
+/**
+ * @deprecated Network switching is DISABLED in this build.
+ * The app uses APP_NETWORK exclusively.
+ * This function logs a warning and does nothing.
+ */
+export const setSolanaNetwork = (network: SolanaNetwork) => {
+  console.warn('[constants] setSolanaNetwork() called but IGNORED - app is locked to:', APP_NETWORK, '| attempted:', network);
+  // DO NOT CHANGE currentNetwork - it's locked to APP_NETWORK
+};
+
+// Legacy export for compatibility - always returns APP_NETWORK
+export const SOLANA_NETWORK = APP_NETWORK;
+
+// ============================================
+// Other Constants
+// ============================================
 
 export const USDC_DECIMALS = 6;
 

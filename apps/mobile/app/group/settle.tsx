@@ -50,7 +50,7 @@ import {
   shouldShowOpenWallet,
   getErrorActionText,
 } from '../../lib/errors';
-import { getSolanaNetwork } from '../../lib/constants';
+import { APP_NETWORK } from '../../lib/constants';
 
 type Currency = 'USDC' | 'SOL';
 
@@ -263,7 +263,7 @@ export default function SettleScreen() {
     }
     
     const attemptId = ++sendAttemptRef.current;
-    const network = getSolanaNetwork();
+    const network = APP_NETWORK; // Single source of truth
     
     console.log('[settle][send] START', {
       attemptId,

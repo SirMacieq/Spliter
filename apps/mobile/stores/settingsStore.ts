@@ -1,70 +1,80 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppSettings } from '../lib/types';
-import { STORAGE_KEYS, setSolanaNetwork, SolanaNetwork, getSolanaNetwork } from '../lib/constants';
+import { STORAGE_KEYS, SolanaNetwork, APP_NETWORK } from '../lib/constants';
+
+/**
+ * Settings Store
+ * 
+ * NOTE: Network switching is DISABLED in this build.
+ * The app always uses APP_NETWORK from constants.ts.
+ * 
+ * The `network` field here is kept for UI display purposes only
+ * and always reflects APP_NETWORK. It cannot be changed.
+ */
 
 interface SettingsStore {
-  // State
+  // State - network is READ-ONLY, always APP_NETWORK
   network: SolanaNetwork;
   isHydrated: boolean;
   
   // Actions
   hydrate: () => Promise<void>;
+  /**
+   * @deprecated Network switching is disabled in this build.
+   * This function logs a warning and does nothing.
+   */
   setNetwork: (network: SolanaNetwork) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
-  // Initialize from constants (which reads from env) - SINGLE SOURCE OF TRUTH
-  network: getSolanaNetwork(),
+  // ALWAYS use APP_NETWORK - no persisted override
+  network: APP_NETWORK,
   isHydrated: false,
   
   hydrate: async () => {
+    console.log('[settings] Hydrating - network locked to:', APP_NETWORK);
+    
     try {
+      // Read settings but DO NOT apply persisted network
       const data = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);
-      const envNetwork = getSolanaNetwork(); // Already set from env in constants.ts
-      
       if (data) {
         const settings: AppSettings = JSON.parse(data);
-        // Only use persisted network if explicitly saved, otherwise use env
-        const networkToUse = settings.network || envNetwork;
-        setSolanaNetwork(networkToUse);
-        set({ 
-          network: networkToUse,
-          isHydrated: true,
-        });
-        console.log('[settings] Hydrated from storage:', { 
+        console.log('[settings] Found persisted settings:', { 
           persisted: settings.network, 
-          env: envNetwork,
-          using: networkToUse 
+          appNetwork: APP_NETWORK,
+          action: 'IGNORING persisted network, using APP_NETWORK'
         });
-      } else {
-        // No saved settings - use env default (already set in constants)
-        set({ 
-          network: envNetwork,
-          isHydrated: true 
-        });
-        console.log('[settings] No saved settings, using env:', envNetwork);
       }
+      
+      // Always use APP_NETWORK regardless of persisted value
+      set({ 
+        network: APP_NETWORK,
+        isHydrated: true,
+      });
     } catch (error) {
       console.error('[settings] Failed to hydrate:', error);
-      // Fall back to env default
-      const envNetwork = getSolanaNetwork();
       set({ 
-        network: envNetwork,
-        isHydrated: true 
+        network: APP_NETWORK,
+        isHydrated: true,
       });
     }
   },
   
   setNetwork: async (network) => {
-    console.log('[settings] Network changed:', get().network, '->', network);
-    // Update global config
-    setSolanaNetwork(network);
+    // Network switching is DISABLED
+    console.warn('[settings] setNetwork() called but IGNORED - app locked to:', APP_NETWORK, '| attempted:', network);
     
-    // Persist
-    const settings: AppSettings = { network };
-    await AsyncStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
-    set({ network });
+    // Clear any persisted network to prevent confusion on restart
+    try {
+      const settings: AppSettings = { network: APP_NETWORK };
+      await AsyncStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    } catch (e) {
+      // Ignore storage errors
+    }
+    
+    // State stays at APP_NETWORK
+    set({ network: APP_NETWORK });
   },
 }));
 

@@ -71,21 +71,11 @@ export default function SettingsScreen() {
   }, [loadBalances, network]);
   
   const handleNetworkToggle = (value: boolean) => {
-    const newNetwork: SolanaNetwork = value ? 'devnet' : 'mainnet-beta';
-    
+    // Network switching is DISABLED in this build
     Alert.alert(
-      'Switch Network',
-      `Switch to ${value ? 'Devnet' : 'Mainnet'}? Balances will refresh.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Switch',
-          onPress: async () => {
-            await setNetwork(newNetwork);
-            loadBalances();
-          },
-        },
-      ]
+      'Network Locked',
+      `This build is configured for ${getNetworkName()} only.\n\nNetwork switching is disabled for stability.`,
+      [{ text: 'OK' }]
     );
   };
   

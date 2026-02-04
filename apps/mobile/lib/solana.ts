@@ -19,7 +19,7 @@ import {
 } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
 import { 
   getSolanaRpcUrl,
-  getSolanaNetwork,
+  APP_NETWORK,
   getCurrentUsdcMint, 
   getExplorerBaseUrl,
   USDC_DECIMALS,
@@ -206,7 +206,7 @@ export const sendUsdcTransfer = async (
   // Sign and send via MWA
   const signature = await transact(async (wallet: Web3MobileWallet) => {
     await wallet.authorize({
-      cluster: getSolanaNetwork(),
+      cluster: APP_NETWORK,
       identity: APP_IDENTITY,
     });
     
@@ -247,7 +247,7 @@ export const sendSolTransfer = async (
   
   const signature = await transact(async (wallet: Web3MobileWallet) => {
     await wallet.authorize({
-      cluster: getSolanaNetwork(),
+      cluster: APP_NETWORK,
       identity: APP_IDENTITY,
     });
     
@@ -295,14 +295,14 @@ export const transferSol = async (
 // Get explorer URL for transaction
 export const getExplorerUrl = (signature: string): string => {
   const baseUrl = getExplorerBaseUrl();
-  const cluster = getSolanaNetwork() === 'devnet' ? '?cluster=devnet' : '';
+  const cluster = APP_NETWORK === 'devnet' ? '?cluster=devnet' : '';
   return `${baseUrl}/tx/${signature}${cluster}`;
 };
 
 // Get explorer URL for account
 export const getAccountExplorerUrl = (address: string): string => {
   const baseUrl = getExplorerBaseUrl();
-  const cluster = getSolanaNetwork() === 'devnet' ? '?cluster=devnet' : '';
+  const cluster = APP_NETWORK === 'devnet' ? '?cluster=devnet' : '';
   return `${baseUrl}/account/${address}${cluster}`;
 };
 
@@ -359,7 +359,7 @@ export const sendSolTransferWithFee = async (
   
   const signature = await transact(async (wallet: Web3MobileWallet) => {
     await wallet.authorize({
-      cluster: getSolanaNetwork(),
+      cluster: APP_NETWORK,
       identity: APP_IDENTITY,
     });
     
@@ -458,7 +458,7 @@ export const sendUsdcTransferWithFee = async (
   
   const signature = await transact(async (wallet: Web3MobileWallet) => {
     await wallet.authorize({
-      cluster: getSolanaNetwork(),
+      cluster: APP_NETWORK,
       identity: APP_IDENTITY,
     });
     
@@ -591,7 +591,7 @@ export const sendSplTokenTransferWithFee = async (
   
   const signature = await transact(async (wallet: Web3MobileWallet) => {
     await wallet.authorize({
-      cluster: getSolanaNetwork(),
+      cluster: APP_NETWORK,
       identity: APP_IDENTITY,
     });
     
@@ -668,7 +668,7 @@ export const sendNftTransferWithFee = async (
   
   const signature = await transact(async (wallet: Web3MobileWallet) => {
     await wallet.authorize({
-      cluster: getSolanaNetwork(),
+      cluster: APP_NETWORK,
       identity: APP_IDENTITY,
     });
     

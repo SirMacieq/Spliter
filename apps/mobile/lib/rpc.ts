@@ -11,7 +11,7 @@
  */
 
 import { Connection, BlockhashWithExpiryBlockHeight } from '@solana/web3.js';
-import { getSolanaNetwork, getSolanaRpcUrl } from './constants';
+import { APP_NETWORK, getSolanaRpcUrl } from './constants';
 
 // ============================================
 // Configuration
@@ -136,7 +136,7 @@ function getPrimaryRpcUrl(): string {
 }
 
 function getRpcCandidates(): string[] {
-  const network = getSolanaNetwork();
+  const network = APP_NETWORK; // Single source of truth
   const primary = getPrimaryRpcUrl();
   const fallbacks = FALLBACK_RPCS[network] ?? [];
   
