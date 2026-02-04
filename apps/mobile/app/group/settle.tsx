@@ -38,10 +38,12 @@ import {
   getUsdcBalance, 
   getSolBalance,
   getExplorerUrl,
-  categorizeError,
+  checkRpcHealth,
+  getRpcErrorMessage,
 } from '../../lib/solana';
 import { SettleStatus, SettleErrorType } from '../../lib/types';
 import { withTimeout, isTimeoutError } from '../../lib/timeout';
+import { categorizePaymentError, PaymentError, getErrorEmoji } from '../../lib/errors';
 
 type Currency = 'USDC' | 'SOL';
 
@@ -64,12 +66,14 @@ export default function SettleScreen() {
   const [status, setStatus] = useState<SettleStatus>('idle');
   const [error, setError] = useState('');
   const [errorType, setErrorType] = useState<SettleErrorType | null>(null);
+  const [paymentError, setPaymentError] = useState<PaymentError | null>(null);
   const [txSignature, setTxSignature] = useState<string | null>(null);
   const [copiedSignature, setCopiedSignature] = useState(false);
   
   const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
   const [solBalance, setSolBalance] = useState<number | null>(null);
   const [balanceFetchFailed, setBalanceFetchFailed] = useState(false);
+  const [rpcAvailable, setRpcAvailable] = useState<boolean | null>(null);
   
   // Guards to prevent concurrent operations and infinite loops
   const isSendingRef = useRef(false);
@@ -94,9 +98,22 @@ export default function SettleScreen() {
     setStatus('loading-balance');
     setError('');
     setErrorType(null);
+    setPaymentError(null);
     setBalanceFetchFailed(false);
     
     try {
+      // First check RPC health
+      const healthCheck = await checkRpcHealth();
+      setRpcAvailable(healthCheck.available);
+      
+      if (!healthCheck.available) {
+        console.warn('RPC health check failed:', healthCheck.error);
+        setBalanceFetchFailed(true);
+        setError(healthCheck.error || 'Solana network unavailable');
+        setErrorType('network');
+        return;
+      }
+      
       const [usdc, sol] = await withTimeout(
         () => Promise.all([
           getUsdcBalance(publicKey),
@@ -115,11 +132,10 @@ export default function SettleScreen() {
     } catch (err: any) {
       console.error('Failed to load balances:', err);
       setBalanceFetchFailed(true);
-      if (isTimeoutError(err)) {
-        setError('Balance loading timed out. You can still try to settle.');
-      } else {
-        setError('Unable to load balances. You can still try to settle.');
-      }
+      setRpcAvailable(false);
+      
+      const errMsg = getRpcErrorMessage(err);
+      setError(errMsg + ' You can still try to settle.');
       setErrorType('network');
     } finally {
       isLoadingBalancesRef.current = false;
@@ -216,6 +232,7 @@ export default function SettleScreen() {
     setStatus('signing');
     setError('');
     setErrorType(null);
+    setPaymentError(null);
     
     try {
       const signature = currency === 'USDC'
@@ -260,11 +277,25 @@ export default function SettleScreen() {
       }
     } catch (err: any) {
       console.error('Settlement error:', err);
-      const { type, message } = categorizeError(err);
-      setError(message);
-      setErrorType(type);
       
-      if (type === 'rejected') {
+      // Use new categorization system
+      const payErr = categorizePaymentError(err);
+      setPaymentError(payErr);
+      setError(payErr.message);
+      
+      // Map to legacy errorType for UI compatibility
+      const typeMap: Record<string, SettleErrorType> = {
+        'wallet_rejected': 'rejected',
+        'insufficient_sol': 'fee',
+        'insufficient_balance': 'balance',
+        'timeout': 'timeout',
+        'network': 'network',
+        'rpc_unavailable': 'network',
+        'blockhash_failed': 'network',
+      };
+      setErrorType(typeMap[payErr.type] || 'general');
+      
+      if (payErr.type === 'wallet_rejected') {
         setTxSignature(null);
         setStatus('idle');
       } else {
@@ -328,6 +359,8 @@ export default function SettleScreen() {
       setStatus('idle');
       setError('');
       setErrorType(null);
+      setPaymentError(null);
+      setRpcAvailable(null);
       handleRetryBalances();
     }
   };
@@ -348,6 +381,7 @@ export default function SettleScreen() {
   const handleCancel = () => {
     setStatus('idle');
     setError('');
+    setPaymentError(null);
   };
   
   if (!group || !to) {
@@ -459,16 +493,24 @@ export default function SettleScreen() {
   
   // ========== ERROR SCREEN ==========
   if (status === 'error') {
+    const errorEmoji = paymentError ? getErrorEmoji(paymentError.type) : '⚠️';
+    const showFaucet = (errorType === 'fee' || paymentError?.type === 'insufficient_sol') && faucetUrl;
+    const actionText = txSignature 
+      ? "Check Status" 
+      : (paymentError?.recoverable ? "Try Again" : "Go Back");
+    
     return (
       <>
         <Stack.Screen options={{ title: 'Payment Failed' }} />
         <View style={styles.container}>
           <View style={styles.centerContent}>
-            <View style={styles.errorIcon}>
-              <Text style={styles.errorIconText}>!</Text>
-            </View>
+            <Text style={styles.errorEmoji}>{errorEmoji}</Text>
             <Text style={styles.errorTitle}>Payment Failed</Text>
             <Text style={styles.errorMessage}>{error}</Text>
+            
+            {paymentError?.userAction && (
+              <Text style={styles.errorHint}>{paymentError.userAction}</Text>
+            )}
             
             {txSignature && (
               <Card style={styles.txCard}>
@@ -479,7 +521,7 @@ export default function SettleScreen() {
               </Card>
             )}
             
-            {errorType === 'fee' && faucetUrl && (
+            {showFaucet && (
               <TouchableOpacity style={styles.helpLink} onPress={handleOpenFaucet}>
                 <Text style={styles.helpLinkText}>Get {networkName} SOL →</Text>
               </TouchableOpacity>
@@ -488,8 +530,8 @@ export default function SettleScreen() {
           
           <View style={styles.footerRow}>
             <Button 
-              title={txSignature ? "Check Status" : "Try Again"} 
-              onPress={handleRetry} 
+              title={actionText} 
+              onPress={paymentError?.recoverable || txSignature ? handleRetry : handleDone} 
               size="large"
               style={styles.flexButton}
             />
@@ -1060,6 +1102,13 @@ const styles = StyleSheet.create({
     ...TYPOGRAPHY.body,
     color: COLORS.textSecondary, 
     textAlign: 'center', 
+    marginBottom: SPACING.md,
+    maxWidth: 280,
+  },
+  errorHint: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textMuted,
+    textAlign: 'center',
     marginBottom: SPACING['2xl'],
     maxWidth: 280,
   },

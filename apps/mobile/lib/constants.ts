@@ -8,21 +8,30 @@ export const APP_VERSION = '1.0.0';
 // Solana Network Configuration
 export type SolanaNetwork = 'mainnet-beta' | 'devnet';
 
-// Network config - can be toggled in settings
-// Default to devnet for safety during development
-let currentNetwork: SolanaNetwork = 'devnet';
+// Network config - read from env, default to mainnet-beta for production safety
+// EXPO_PUBLIC_SOLANA_NETWORK controls which network we use
+const envNetwork = process.env.EXPO_PUBLIC_SOLANA_NETWORK;
+let currentNetwork: SolanaNetwork = 
+  envNetwork === 'devnet' ? 'devnet' : 'mainnet-beta';
+
+// Log at module load time for debugging
+console.log('[constants] Network initialized:', {
+  envNetwork,
+  currentNetwork,
+  envRpc: process.env.EXPO_PUBLIC_SOLANA_RPC_URL,
+});
 
 export const NETWORK_CONFIG = {
   'mainnet-beta': {
-    rpcUrl: 'https://api.mainnet-beta.solana.com',
-    usdcMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    rpcUrl: process.env.EXPO_PUBLIC_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
+    usdcMint: process.env.EXPO_PUBLIC_USDC_MINT || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     explorerUrl: 'https://solscan.io',
     faucetUrl: null,
     name: 'Mainnet',
   },
   'devnet': {
-    rpcUrl: 'https://api.devnet.solana.com',
-    usdcMint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+    rpcUrl: process.env.EXPO_PUBLIC_SOLANA_RPC_URL || 'https://api.devnet.solana.com',
+    usdcMint: process.env.EXPO_PUBLIC_USDC_MINT || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
     explorerUrl: 'https://solscan.io',
     faucetUrl: 'https://faucet.solana.com',
     name: 'Devnet',
@@ -31,10 +40,20 @@ export const NETWORK_CONFIG = {
 
 // Getters for current network config
 export const getSolanaNetwork = (): SolanaNetwork => currentNetwork;
-export const setSolanaNetwork = (network: SolanaNetwork) => { currentNetwork = network; };
+export const setSolanaNetwork = (network: SolanaNetwork) => { 
+  console.log('[constants] Network changed:', currentNetwork, '->', network);
+  currentNetwork = network; 
+};
 
 export const getNetworkConfig = () => NETWORK_CONFIG[currentNetwork];
-export const getSolanaRpcUrl = () => getNetworkConfig().rpcUrl;
+export const getSolanaRpcUrl = () => {
+  // Prefer explicit env RPC URL over network default
+  const envRpc = process.env.EXPO_PUBLIC_SOLANA_RPC_URL;
+  if (envRpc && envRpc.startsWith('http')) {
+    return envRpc;
+  }
+  return getNetworkConfig().rpcUrl;
+};
 export const getCurrentUsdcMint = () => getNetworkConfig().usdcMint;
 export const getExplorerBaseUrl = () => getNetworkConfig().explorerUrl;
 export const getFaucetUrl = () => getNetworkConfig().faucetUrl;

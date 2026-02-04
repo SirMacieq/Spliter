@@ -31,6 +31,13 @@ import {
   isFeeConfigured,
   NFT_FEE_SOL,
 } from './constants';
+import {
+  executeRpc,
+  getBlockhashWithRetry,
+  checkRpcHealth,
+  RpcError,
+  getRpcErrorMessage,
+} from './rpc';
 
 const APP_IDENTITY = {
   name: APP_NAME,
@@ -38,62 +45,25 @@ const APP_IDENTITY = {
   icon: 'favicon.ico',
 };
 
-// Get Solana connection
+// Re-export RPC utilities for use in components
+export { checkRpcHealth, RpcError, getRpcErrorMessage };
+
+// Get Solana connection (basic, for simple operations)
 export const getConnection = (): Connection => {
   return new Connection(getSolanaRpcUrl(), 'confirmed');
 };
 
-// ===== RPC fallback (fix for 403 Access forbidden) =====
-const FALLBACK_RPC_BY_NETWORK: Record<string, string[]> = {
-  'mainnet-beta': [
-    'https://api.mainnet-beta.solana.com',
-    'https://solana-mainnet.rpc.extrnode.com',
-    'https://rpc.ankr.com/solana',
-    'https://solana.public-rpc.com',
-    'https://api.metaplex.solana.com',
-  ],
-  devnet: [
-    'https://api.devnet.solana.com',
-    'https://rpc.ankr.com/solana_devnet',
-  ],
-};
-
-function getRpcCandidates(): string[] {
-  const network = getSolanaNetwork();
-  const primary = getSolanaRpcUrl();
-  const fallbacks = FALLBACK_RPC_BY_NETWORK[network] ?? [];
-  return Array.from(new Set([primary, ...fallbacks])).filter(Boolean);
-}
-
+// ===== Robust RPC wrapper =====
+// Uses the new rpc.ts layer with retry/fallback/timeout
 async function withRpcFallback<T>(
   fn: (connection: Connection, rpcUrl: string) => Promise<T>
 ): Promise<T> {
-  const candidates = getRpcCandidates();
-  let lastErr: any;
-
-  for (const rpcUrl of candidates) {
-    try {
-      const connection = new Connection(rpcUrl, 'confirmed');
-      return await fn(connection, rpcUrl);
-    } catch (e: any) {
-      lastErr = e;
-      const msg = String(e?.message ?? e);
-
-      // jeśli 403/forbidden -> próbuj następny RPC
-      if (
-        msg.includes('403') ||
-        msg.toLowerCase().includes('forbidden') ||
-        msg.toLowerCase().includes('access forbidden')
-      ) {
-        continue;
-      }
-
-      // inne błędy (np. brak neta) - nie maskuj
-      throw e;
-    }
-  }
-
-  throw lastErr;
+  const result = await executeRpc(
+    'RPC operation',
+    (conn) => fn(conn, ''),  // rpcUrl not needed in callback
+    { timeout: 10000, maxRetries: 2 }
+  );
+  return result.data;
 }
 
 // Convert USDC amount to lamports (6 decimals)
@@ -357,7 +327,9 @@ export const sendSolTransferWithFee = async (
     throw new Error('Fee wallet not configured');
   }
 
-  const connection = getConnection();
+  // Get blockhash with robust retry/fallback
+  const { blockhash } = await getBlockhashWithRetry();
+  
   const fromPubkey = new PublicKey(fromWallet);
   const toPubkey = new PublicKey(toWallet);
   const feePubkey = new PublicKey(FEE_WALLET);
@@ -376,11 +348,10 @@ export const sendSolTransferWithFee = async (
     lamports: solToLamports(feeAmount),
   });
   
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
   const transaction = new Transaction({
     feePayer: fromPubkey,
-    blockhash,
-    lastValidBlockHeight,
+    blockhash: blockhash.blockhash,
+    lastValidBlockHeight: blockhash.lastValidBlockHeight,
   });
   
   transaction.add(transferToRecipient);
@@ -413,7 +384,11 @@ export const sendUsdcTransferWithFee = async (
     throw new Error('Fee wallet not configured');
   }
 
-  const connection = getConnection();
+  // Get blockhash with robust retry/fallback FIRST
+  const { blockhash, rpcUrl } = await getBlockhashWithRetry();
+  
+  // Use the same RPC that gave us blockhash for ATA checks
+  const connection = new Connection(rpcUrl, 'confirmed');
   const usdcMint = new PublicKey(getCurrentUsdcMint());
   const fromPubkey = new PublicKey(fromWallet);
   const toPubkey = new PublicKey(toWallet);
@@ -423,11 +398,10 @@ export const sendUsdcTransferWithFee = async (
   const toAta = await getAssociatedTokenAddress(usdcMint, toPubkey);
   const feeAta = await getAssociatedTokenAddress(usdcMint, feePubkey);
   
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
   const transaction = new Transaction({
     feePayer: fromPubkey,
-    blockhash,
-    lastValidBlockHeight,
+    blockhash: blockhash.blockhash,
+    lastValidBlockHeight: blockhash.lastValidBlockHeight,
   });
   
   // Check if recipient ATA exists, create if needed

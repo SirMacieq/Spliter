@@ -22,6 +22,8 @@ import {
   MIN_SOL_FOR_FEES, 
   getFaucetUrl, 
   getNetworkName,
+  getSolanaNetwork,
+  getSolanaRpcUrl,
   FEE_PERCENT,
   FEE_WALLET,
   calculateFee,
@@ -35,11 +37,13 @@ import {
   getUsdcBalance, 
   getSolBalance,
   getExplorerUrl,
-  categorizeError,
+  checkRpcHealth,
+  getRpcErrorMessage,
 } from '../lib/solana';
 import { validatePayLinkParams, PayLinkParams, shortenAddress } from '../lib/validation';
 import { SettleStatus, SettleErrorType } from '../lib/types';
 import { withTimeout, isTimeoutError } from '../lib/timeout';
+import { categorizePaymentError, PaymentError, getErrorEmoji } from '../lib/errors';
 
 export default function PayScreen() {
   const router = useRouter();
@@ -65,6 +69,7 @@ export default function PayScreen() {
   const [status, setStatus] = useState<SettleStatus>('idle');
   const [error, setError] = useState('');
   const [errorType, setErrorType] = useState<SettleErrorType | null>(null);
+  const [paymentError, setPaymentError] = useState<PaymentError | null>(null);
   const [txSignature, setTxSignature] = useState<string | null>(null);
   const [copiedSignature, setCopiedSignature] = useState(false);
   
@@ -72,6 +77,18 @@ export default function PayScreen() {
   const [solBalance, setSolBalance] = useState<number | null>(null);
   const [balanceFetchFailed, setBalanceFetchFailed] = useState(false);
   const [balanceLoaded, setBalanceLoaded] = useState(false);
+  const [rpcAvailable, setRpcAvailable] = useState<boolean | null>(null);
+  
+  // Debug state for diagnosis
+  const [debugInfo, setDebugInfo] = useState<{
+    payerPubkey: string;
+    toPubkey: string;
+    rpcUrl: string;
+    network: string;
+    payerBalLamports: number | null;
+    toBalLamports: number | null;
+  } | null>(null);
+  const [showDebug, setShowDebug] = useState(__DEV__);
   
   // Guards to prevent concurrent operations and infinite loops
   const isSendingRef = useRef(false);
@@ -97,17 +114,76 @@ export default function PayScreen() {
     setStatus('loading-balance');
     setError('');
     setErrorType(null);
+    setPaymentError(null);
     setBalanceFetchFailed(false);
     
+    // Capture diagnostic info
+    const payerPubkey = publicKey;
+    const toPubkey = params?.to || '';
+    const rpcUrl = getSolanaRpcUrl();
+    const network = getSolanaNetwork();
+    
+    console.log('[pay][balances] START', {
+      payerPubkey,
+      toPubkey,
+      rpcUrl,
+      network,
+      envNetwork: process.env.EXPO_PUBLIC_SOLANA_NETWORK,
+      envRpc: process.env.EXPO_PUBLIC_SOLANA_RPC_URL,
+    });
+    
     try {
-      const [usdc, sol] = await withTimeout(
+      // First check RPC health
+      const healthCheck = await checkRpcHealth();
+      setRpcAvailable(healthCheck.available);
+      
+      if (!healthCheck.available) {
+        console.warn('[pay][balances] RPC health check failed:', healthCheck.error);
+        setBalanceFetchFailed(true);
+        setBalanceLoaded(true);
+        setError(healthCheck.error || 'Solana network unavailable');
+        setErrorType('network');
+        return;
+      }
+      
+      // Fetch BOTH payer and recipient balance for debugging
+      const { Connection, PublicKey, LAMPORTS_PER_SOL } = await import('@solana/web3.js');
+      const connection = new Connection(rpcUrl, 'confirmed');
+      
+      const [payerBalLamports, toBalLamports] = await withTimeout(
         () => Promise.all([
-          getUsdcBalance(publicKey),
-          getSolBalance(publicKey),
+          connection.getBalance(new PublicKey(payerPubkey)),
+          toPubkey ? connection.getBalance(new PublicKey(toPubkey)) : Promise.resolve(0),
         ]),
         15000,
         'Balance fetch timed out'
       );
+      
+      // Log detailed diagnostic info
+      console.log('[pay][balances] RESULT', {
+        payerPubkey,
+        toPubkey,
+        rpcUrl,
+        network,
+        payerBalLamports,
+        payerBalSOL: payerBalLamports / LAMPORTS_PER_SOL,
+        toBalLamports,
+        toBalSOL: toBalLamports / LAMPORTS_PER_SOL,
+      });
+      
+      // Update debug state for UI
+      setDebugInfo({
+        payerPubkey,
+        toPubkey,
+        rpcUrl,
+        network,
+        payerBalLamports,
+        toBalLamports,
+      });
+      
+      // Fetch USDC balance too
+      const usdc = await getUsdcBalance(payerPubkey);
+      const sol = payerBalLamports / LAMPORTS_PER_SOL;
       
       setUsdcBalance(usdc);
       setSolBalance(sol);
@@ -118,21 +194,19 @@ export default function PayScreen() {
         setErrorType('fee');
       }
     } catch (err: any) {
-      console.error('Failed to load balances:', err);
+      console.error('[pay][balances] FAILED:', err);
       setBalanceFetchFailed(true);
       setBalanceLoaded(true);
+      setRpcAvailable(false);
       
-      if (isTimeoutError(err)) {
-        setError('Balance loading timed out. You can still try to pay.');
-      } else {
-        setError('Unable to load balances. You can still try to pay.');
-      }
+      const errMsg = getRpcErrorMessage(err);
+      setError(errMsg + ' You can still try to pay.');
       setErrorType('network');
     } finally {
       isLoadingBalancesRef.current = false;
       setStatus('idle');
     }
-  }, [publicKey]);
+  }, [publicKey, params?.to]);
   
   // Effect to load balances ONCE when wallet connects
   // Uses refs to prevent infinite loops
@@ -226,6 +300,7 @@ export default function PayScreen() {
     setStatus('signing');
     setError('');
     setErrorType(null);
+    setPaymentError(null);
     
     try {
       const signature = params.currency === 'USDC'
@@ -261,11 +336,25 @@ export default function PayScreen() {
       }
     } catch (err: any) {
       console.error('Payment error:', err);
-      const { type, message } = categorizeError(err);
-      setError(message);
-      setErrorType(type);
       
-      if (type === 'rejected') {
+      // Use new categorization system
+      const payErr = categorizePaymentError(err);
+      setPaymentError(payErr);
+      setError(payErr.message);
+      
+      // Map to legacy errorType for UI compatibility
+      const typeMap: Record<string, SettleErrorType> = {
+        'wallet_rejected': 'rejected',
+        'insufficient_sol': 'fee',
+        'insufficient_balance': 'balance',
+        'timeout': 'timeout',
+        'network': 'network',
+        'rpc_unavailable': 'network',
+        'blockhash_failed': 'network',
+      };
+      setErrorType(typeMap[payErr.type] || 'general');
+      
+      if (payErr.type === 'wallet_rejected') {
         setTxSignature(null);
         setStatus('idle');
       } else {
@@ -320,6 +409,8 @@ export default function PayScreen() {
       setStatus('idle');
       setError('');
       setErrorType(null);
+      setPaymentError(null);
+      setRpcAvailable(null);
       handleRetryBalances();
     }
   };
@@ -347,6 +438,7 @@ export default function PayScreen() {
   const handleCancel = () => {
     setStatus('idle');
     setError('');
+    setPaymentError(null);
   };
   
   // Handle connect wallet from pay screen
@@ -552,16 +644,24 @@ export default function PayScreen() {
   
   // ========== ERROR SCREEN ==========
   if (status === 'error') {
+    const errorEmoji = paymentError ? getErrorEmoji(paymentError.type) : '⚠️';
+    const showFaucet = (errorType === 'fee' || paymentError?.type === 'insufficient_sol') && faucetUrl;
+    const actionText = txSignature 
+      ? "Check Status" 
+      : (paymentError?.recoverable ? "Try Again" : "Go Back");
+    
     return (
       <>
         <Stack.Screen options={{ title: 'Payment Failed' }} />
         <View style={styles.container}>
           <View style={styles.centerContent}>
-            <View style={styles.errorIcon}>
-              <Text style={styles.errorIconText}>!</Text>
-            </View>
+            <Text style={styles.errorEmoji}>{errorEmoji}</Text>
             <Text style={styles.errorTitle}>Payment Failed</Text>
             <Text style={styles.errorMessage}>{error}</Text>
+            
+            {paymentError?.userAction && (
+              <Text style={styles.errorHint}>{paymentError.userAction}</Text>
+            )}
             
             {txSignature && (
               <Card style={styles.txCard}>
@@ -572,7 +672,7 @@ export default function PayScreen() {
               </Card>
             )}
             
-            {errorType === 'fee' && faucetUrl && (
+            {showFaucet && (
               <TouchableOpacity style={styles.helpLink} onPress={handleOpenFaucet}>
                 <Text style={styles.helpLinkText}>Get {networkName} SOL →</Text>
               </TouchableOpacity>
@@ -581,8 +681,8 @@ export default function PayScreen() {
           
           <View style={styles.footerRow}>
             <Button 
-              title={txSignature ? "Check Status" : "Try Again"} 
-              onPress={handleRetry} 
+              title={actionText} 
+              onPress={paymentError?.recoverable || txSignature ? handleRetry : handleClose} 
               size="large"
               style={styles.flexButton}
             />
@@ -811,7 +911,9 @@ export default function PayScreen() {
           {balanceFetchFailed && (
             <View style={styles.warningBanner}>
               <Text style={styles.warningBannerText}>
-                ⚠️ Couldn't verify your balance. You can still try to pay.
+                {rpcAvailable === false 
+                  ? '📡 Solana network temporarily unavailable. You can still try to pay.'
+                  : '⚠️ Couldn\'t verify your balance. You can still try to pay.'}
               </Text>
             </View>
           )}
@@ -835,6 +937,49 @@ export default function PayScreen() {
           )}
           
           <NetworkBadge style={styles.networkBadgeCenter} />
+          
+          {/* Debug Section (dev builds only) */}
+          {showDebug && debugInfo && (
+            <TouchableOpacity 
+              style={styles.debugSection}
+              onPress={() => setShowDebug(!showDebug)}
+            >
+              <Text style={styles.debugTitle}>🔍 Debug Info (tap to hide)</Text>
+              <Text style={styles.debugText}>
+                Payer: {debugInfo.payerPubkey.slice(0, 8)}...{debugInfo.payerPubkey.slice(-4)}
+              </Text>
+              <Text style={styles.debugText}>
+                To: {debugInfo.toPubkey.slice(0, 8)}...{debugInfo.toPubkey.slice(-4)}
+              </Text>
+              <Text style={styles.debugText}>
+                Network: {debugInfo.network}
+              </Text>
+              <Text style={styles.debugText}>
+                RPC: {new URL(debugInfo.rpcUrl).hostname}
+              </Text>
+              <Text style={styles.debugText}>
+                Payer Balance: {(debugInfo.payerBalLamports ?? 0) / 1e9} SOL ({debugInfo.payerBalLamports} lamports)
+              </Text>
+              <Text style={styles.debugText}>
+                To Balance: {(debugInfo.toBalLamports ?? 0) / 1e9} SOL ({debugInfo.toBalLamports} lamports)
+              </Text>
+              <Text style={styles.debugTextMuted}>
+                ENV_NETWORK: {process.env.EXPO_PUBLIC_SOLANA_NETWORK || 'not set'}
+              </Text>
+              <Text style={styles.debugTextMuted}>
+                ENV_RPC: {process.env.EXPO_PUBLIC_SOLANA_RPC_URL?.slice(0, 30) || 'not set'}...
+              </Text>
+            </TouchableOpacity>
+          )}
+          
+          {showDebug && !debugInfo && (
+            <TouchableOpacity 
+              style={styles.debugSection}
+              onPress={() => setShowDebug(!showDebug)}
+            >
+              <Text style={styles.debugTitle}>🔍 Debug: Waiting for balance fetch...</Text>
+            </TouchableOpacity>
+          )}
         </ScrollView>
         
         <View style={styles.footer}>
@@ -1297,6 +1442,13 @@ const styles = StyleSheet.create({
     ...TYPOGRAPHY.body,
     color: COLORS.textSecondary, 
     textAlign: 'center', 
+    marginBottom: SPACING.md,
+    maxWidth: 280,
+  },
+  errorHint: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textMuted,
+    textAlign: 'center',
     marginBottom: SPACING['2xl'],
     maxWidth: 280,
   },
@@ -1355,5 +1507,32 @@ const styles = StyleSheet.create({
   // Badge
   badge: { 
     marginTop: SPACING.lg,
+  },
+  
+  // Debug Section
+  debugSection: {
+    marginTop: SPACING.xl,
+    padding: SPACING.md,
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLORS.warning,
+  },
+  debugTitle: {
+    ...TYPOGRAPHY.smallMedium,
+    color: COLORS.warning,
+    marginBottom: SPACING.sm,
+  },
+  debugText: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.text,
+    fontFamily: 'monospace',
+    marginBottom: SPACING.xs,
+  },
+  debugTextMuted: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textMuted,
+    fontFamily: 'monospace',
+    marginBottom: SPACING.xs,
   },
 });
