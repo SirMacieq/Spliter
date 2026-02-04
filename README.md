@@ -1,26 +1,79 @@
 # Spliter 💸
 
-Split expenses with friends. Settle instantly on Solana.
+**Split and send SOL & USDC payments on Solana — instantly, on-chain.**
 
-## Overview
+Spliter is a mobile-first Solana dApp that lets you send, split, and batch payments using SOL and USDC. Create payment links or QR codes, settle transactions directly on-chain, or send multiple payments in a single batch.
 
-Spliter is a mobile-first expense splitting app built natively for Solana. Think Venmo meets Splitwise, optimized for Solana Seeker users.
+Built with Solana Seeker and Solana Mobile Wallet Adapter in mind.
 
-## Features
 
-- 👥 Create groups with friends
-- 📝 Track shared expenses in USDC
-- ⚡ Settle up instantly on-chain
-- 🔐 Non-custodial (your keys, your crypto)
+## 🚀 Features
 
-## Tech Stack
+- 💸 **Send SOL & USDC** directly on Solana
+- 🔗 **Create payment links & QR codes**
+- 🔄 **Split payments** between multiple recipients
+- 📦 **Batch transactions** in a single flow
+- 🔐 **Non-custodial** — your wallet, your keys
+- 📱 Optimized for **Solana Mobile / Seeker**
+
+
+## 🧠 How It Works
+
+Spliter connects to your mobile wallet via Solana Mobile Wallet Adapter (MWA).  
+All transactions are executed **directly on-chain** — Spliter never takes custody of funds and does not act as an intermediary.
+
+
+## 🛠 Tech Stack
 
 - **Mobile:** React Native + Expo
 - **Wallet:** Solana Mobile Wallet Adapter (MWA)
 - **State:** Zustand + AsyncStorage
-- **Blockchain:** Solana (USDC transfers)
+- **Blockchain:** Solana
+- **Assets:** SOL, USDC
+- **Network:** Mainnet-beta
 
-## Getting Started
+
+## 🔐 Security & Custody
+
+- Spliter is **non-custodial**
+- Private keys never leave your wallet
+- All transfers are signed by the user
+- No backend custody or fund routing
+
+
+## 📄 Privacy Policy
+
+Spliter respects user privacy.
+
+**Data Collection**
+- Spliter does **not** collect personal data
+- No email addresses, names, or identifiers are stored
+- No analytics tied to wallet identity
+
+**Wallet Usage**
+- Wallet addresses are used **only** to facilitate on-chain transactions
+- Wallet data is not stored on external servers
+
+**On-Chain Data**
+- All transactions occur on the Solana blockchain and are publicly verifiable
+- Spliter does not control or modify on-chain data
+
+**Third Parties**
+- Spliter relies on the Solana blockchain and the user's chosen wallet provider
+- No user data is sold or shared
+
+
+## ⚖️ License
+
+MIT License  
+See [`LICENSE`](./LICENSE)
+
+
+## © Copyright
+
+© 2026 Spliter  
+All rights reserved.
+
 
 ### Prerequisites
 
