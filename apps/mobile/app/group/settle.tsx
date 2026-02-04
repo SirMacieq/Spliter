@@ -78,7 +78,6 @@ export default function SettleScreen() {
   // Guards to prevent concurrent operations and infinite loops
   const isSendingRef = useRef(false);
   const isLoadingBalancesRef = useRef(false);
-  const loadBalancesCalledRef = useRef(false);
   
   const recipient = group?.members.find(m => m.wallet === to);
   const recipientDisplay = recipient?.nickname || 
@@ -101,13 +100,18 @@ export default function SettleScreen() {
     setPaymentError(null);
     setBalanceFetchFailed(false);
     
+    console.log('[settle][balances] START', {
+      payer: publicKey ? `${publicKey.slice(0, 8)}...${publicKey.slice(-4)}` : null,
+      to: to ? `${to.slice(0, 8)}...${to.slice(-4)}` : null,
+    });
+    
     try {
       // First check RPC health
       const healthCheck = await checkRpcHealth();
       setRpcAvailable(healthCheck.available);
       
       if (!healthCheck.available) {
-        console.warn('RPC health check failed:', healthCheck.error);
+        console.warn('[settle][balances] RPC health check failed:', healthCheck.error);
         setBalanceFetchFailed(true);
         setError(healthCheck.error || 'Solana network unavailable');
         setErrorType('network');
@@ -122,6 +126,13 @@ export default function SettleScreen() {
         15000,
         'Balance fetch timed out'
       );
+      
+      console.log('[settle][balances] RESULT', {
+        payer: `${publicKey.slice(0, 8)}...`,
+        usdc,
+        sol,
+      });
+      
       setUsdcBalance(usdc);
       setSolBalance(sol);
       
@@ -130,7 +141,7 @@ export default function SettleScreen() {
         setErrorType('fee');
       }
     } catch (err: any) {
-      console.error('Failed to load balances:', err);
+      console.error('[settle][balances] FAILED:', err);
       setBalanceFetchFailed(true);
       setRpcAvailable(false);
       
@@ -141,20 +152,33 @@ export default function SettleScreen() {
       isLoadingBalancesRef.current = false;
       setStatus('idle');
     }
-  }, [publicKey]);
+  }, [publicKey, to]);
   
-  // Effect to load balances ONCE when wallet is ready
+  // Track last loaded payer to detect actual changes
+  const lastLoadedPayerRef = useRef<string | null>(null);
+  
+  // Effect to load balances when wallet connects or payer changes
+  // IMPORTANT: Do NOT include loadBalances in deps - it causes loops
   useEffect(() => {
-    if (publicKey && !loadBalancesCalledRef.current) {
-      loadBalancesCalledRef.current = true;
+    const payerChanged = publicKey !== lastLoadedPayerRef.current;
+    const shouldLoad = publicKey && payerChanged && !isLoadingBalancesRef.current;
+    
+    console.log('[settle][effect] Balance load check', {
+      publicKey: publicKey ? `${publicKey.slice(0, 8)}...` : null,
+      payerChanged,
+      shouldLoad,
+    });
+    
+    if (shouldLoad) {
+      lastLoadedPayerRef.current = publicKey;
       loadBalances();
     }
-  }, [publicKey, loadBalances]);
+  }, [publicKey]); // NOTE: loadBalances intentionally omitted
   
   // Reset on disconnect
   useEffect(() => {
     if (!publicKey) {
-      loadBalancesCalledRef.current = false;
+      lastLoadedPayerRef.current = null;
     }
   }, [publicKey]);
   
@@ -347,10 +371,12 @@ export default function SettleScreen() {
   };
   
   // Manual retry for balance loading
-  const handleRetryBalances = () => {
-    loadBalancesCalledRef.current = false;
+  const handleRetryBalances = useCallback(() => {
+    console.log('[settle][retry] Manual balance refresh triggered');
+    setBalanceFetchFailed(false);
+    isLoadingBalancesRef.current = false;
     loadBalances();
-  };
+  }, [loadBalances]);
   
   const handleRetry = () => {
     if (txSignature) {

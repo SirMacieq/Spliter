@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppSettings } from '../lib/types';
-import { STORAGE_KEYS, setSolanaNetwork, SolanaNetwork } from '../lib/constants';
+import { STORAGE_KEYS, setSolanaNetwork, SolanaNetwork, getSolanaNetwork } from '../lib/constants';
 
 interface SettingsStore {
   // State
@@ -14,30 +14,50 @@ interface SettingsStore {
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
-  network: 'devnet',
+  // Initialize from constants (which reads from env) - SINGLE SOURCE OF TRUTH
+  network: getSolanaNetwork(),
   isHydrated: false,
   
   hydrate: async () => {
     try {
       const data = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);
+      const envNetwork = getSolanaNetwork(); // Already set from env in constants.ts
+      
       if (data) {
         const settings: AppSettings = JSON.parse(data);
-        // Apply network to global config
-        setSolanaNetwork(settings.network);
+        // Only use persisted network if explicitly saved, otherwise use env
+        const networkToUse = settings.network || envNetwork;
+        setSolanaNetwork(networkToUse);
         set({ 
-          network: settings.network,
+          network: networkToUse,
           isHydrated: true,
         });
+        console.log('[settings] Hydrated from storage:', { 
+          persisted: settings.network, 
+          env: envNetwork,
+          using: networkToUse 
+        });
       } else {
-        set({ isHydrated: true });
+        // No saved settings - use env default (already set in constants)
+        set({ 
+          network: envNetwork,
+          isHydrated: true 
+        });
+        console.log('[settings] No saved settings, using env:', envNetwork);
       }
     } catch (error) {
-      console.error('Failed to hydrate settings store:', error);
-      set({ isHydrated: true });
+      console.error('[settings] Failed to hydrate:', error);
+      // Fall back to env default
+      const envNetwork = getSolanaNetwork();
+      set({ 
+        network: envNetwork,
+        isHydrated: true 
+      });
     }
   },
   
   setNetwork: async (network) => {
+    console.log('[settings] Network changed:', get().network, '->', network);
     // Update global config
     setSolanaNetwork(network);
     

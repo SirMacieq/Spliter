@@ -58,7 +58,7 @@ export default function PayScreen() {
   const publicKey = useWalletPublicKey();
   const isConnected = useIsConnected();
   const isBooting = useIsBooting();
-  const { connect } = useWalletConnection();
+  const { connect, reconnect } = useWalletConnection();
   const addTxHistory = useGroupStore((state) => state.addTxHistory);
   const updateTxStatus = useGroupStore((state) => state.updateTxStatus);
   
@@ -93,7 +93,6 @@ export default function PayScreen() {
   // Guards to prevent concurrent operations and infinite loops
   const isSendingRef = useRef(false);
   const isLoadingBalancesRef = useRef(false);
-  const loadBalancesCalledRef = useRef(false);
   
   const networkName = getNetworkName();
   const faucetUrl = getFaucetUrl();
@@ -208,24 +207,40 @@ export default function PayScreen() {
     }
   }, [publicKey, params?.to]);
   
-  // Effect to load balances ONCE when wallet connects
-  // Uses refs to prevent infinite loops
+  // Track last loaded payer to detect actual changes
+  const lastLoadedPayerRef = useRef<string | null>(null);
+  
+  // Effect to load balances when wallet connects or payer changes
+  // IMPORTANT: Do NOT include loadBalances in deps - it causes loops
   useEffect(() => {
-    // Only load once when:
+    // Only load when:
     // 1. Wallet is connected (publicKey exists)
     // 2. Params are valid
-    // 3. Haven't already loaded/attempted
-    if (publicKey && params && !loadBalancesCalledRef.current) {
-      loadBalancesCalledRef.current = true;
+    // 3. Payer actually changed OR first load
+    const payerChanged = publicKey !== lastLoadedPayerRef.current;
+    const shouldLoad = publicKey && params && payerChanged && !isLoadingBalancesRef.current;
+    
+    console.log('[pay][effect] Balance load check', {
+      publicKey: publicKey ? `${publicKey.slice(0, 8)}...` : null,
+      lastPayer: lastLoadedPayerRef.current ? `${lastLoadedPayerRef.current.slice(0, 8)}...` : null,
+      payerChanged,
+      hasParams: !!params,
+      isLoading: isLoadingBalancesRef.current,
+      shouldLoad,
+    });
+    
+    if (shouldLoad) {
+      lastLoadedPayerRef.current = publicKey;
       loadBalances();
     }
-  }, [publicKey, params, loadBalances]);
+  }, [publicKey, params]); // NOTE: loadBalances intentionally omitted to prevent loops
   
-  // Reset the "called" ref when publicKey changes (reconnect scenario)
+  // Reset state when wallet disconnects
   useEffect(() => {
     if (!publicKey) {
-      loadBalancesCalledRef.current = false;
+      lastLoadedPayerRef.current = null;
       setBalanceLoaded(false);
+      setDebugInfo(null);
     }
   }, [publicKey]);
   
@@ -395,12 +410,17 @@ export default function PayScreen() {
   };
   
   // Retry balance fetch (manual user action)
-  const handleRetryBalances = () => {
-    loadBalancesCalledRef.current = false;
+  const handleRetryBalances = useCallback(() => {
+    console.log('[pay][retry] Manual balance refresh triggered');
+    // Don't reset lastLoadedPayerRef - we want to force a re-fetch for same payer
+    // Instead, directly call loadBalances which will run regardless
     setBalanceLoaded(false);
     setBalanceFetchFailed(false);
+    setDebugInfo(null);
+    // Reset loading guard to allow the fetch
+    isLoadingBalancesRef.current = false;
     loadBalances();
-  };
+  }, [loadBalances]);
   
   const handleRetry = () => {
     if (txSignature) {
@@ -907,6 +927,18 @@ export default function PayScreen() {
             ) : null}
           </View>
           
+          {/* Switch Wallet Option */}
+          {balanceLoaded && (
+            <TouchableOpacity 
+              style={styles.switchWalletButton}
+              onPress={reconnect}
+            >
+              <Text style={styles.switchWalletText}>
+                Wrong wallet? Tap to switch
+              </Text>
+            </TouchableOpacity>
+          )}
+          
           {/* Balance fetch error - show warning but allow proceed */}
           {balanceFetchFailed && (
             <View style={styles.warningBanner}>
@@ -940,11 +972,10 @@ export default function PayScreen() {
           
           {/* Debug Section (dev builds only) */}
           {showDebug && debugInfo && (
-            <TouchableOpacity 
-              style={styles.debugSection}
-              onPress={() => setShowDebug(!showDebug)}
-            >
-              <Text style={styles.debugTitle}>🔍 Debug Info (tap to hide)</Text>
+            <View style={styles.debugSection}>
+              <TouchableOpacity onPress={() => setShowDebug(false)}>
+                <Text style={styles.debugTitle}>🔍 Debug Info (tap to hide)</Text>
+              </TouchableOpacity>
               <Text style={styles.debugText}>
                 Payer: {debugInfo.payerPubkey.slice(0, 8)}...{debugInfo.payerPubkey.slice(-4)}
               </Text>
@@ -969,15 +1000,56 @@ export default function PayScreen() {
               <Text style={styles.debugTextMuted}>
                 ENV_RPC: {process.env.EXPO_PUBLIC_SOLANA_RPC_URL?.slice(0, 30) || 'not set'}...
               </Text>
-            </TouchableOpacity>
+              
+              {/* Debug Actions */}
+              <View style={styles.debugActions}>
+                <TouchableOpacity 
+                  style={styles.debugButton}
+                  onPress={async () => {
+                    await Clipboard.setStringAsync(debugInfo.payerPubkey);
+                    console.log('[pay][debug] Copied payer address:', debugInfo.payerPubkey);
+                  }}
+                >
+                  <Text style={styles.debugButtonText}>📋 Copy Payer</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.debugButton}
+                  onPress={() => {
+                    const cluster = debugInfo.network === 'devnet' ? '?cluster=devnet' : '';
+                    const url = `https://solscan.io/account/${debugInfo.payerPubkey}${cluster}`;
+                    Linking.openURL(url);
+                  }}
+                >
+                  <Text style={styles.debugButtonText}>🔗 Explorer</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.debugButton}
+                  onPress={handleRetryBalances}
+                >
+                  <Text style={styles.debugButtonText}>🔄 Refresh</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           )}
           
           {showDebug && !debugInfo && (
             <TouchableOpacity 
               style={styles.debugSection}
-              onPress={() => setShowDebug(!showDebug)}
+              onPress={() => setShowDebug(false)}
             >
               <Text style={styles.debugTitle}>🔍 Debug: Waiting for balance fetch...</Text>
+              <Text style={styles.debugTextMuted}>
+                Payer from store: {publicKey ? `${publicKey.slice(0, 8)}...${publicKey.slice(-4)}` : 'not connected'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          
+          {!showDebug && __DEV__ && (
+            <TouchableOpacity 
+              style={styles.debugToggle}
+              onPress={() => setShowDebug(true)}
+            >
+              <Text style={styles.debugToggleText}>🔍 Show Debug</Text>
             </TouchableOpacity>
           )}
         </ScrollView>
@@ -1183,6 +1255,15 @@ const styles = StyleSheet.create({
   refreshText: { 
     ...TYPOGRAPHY.smallMedium,
     color: COLORS.primary,
+  },
+  switchWalletButton: {
+    alignItems: 'center',
+    marginBottom: SPACING.lg,
+  },
+  switchWalletText: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textMuted,
+    textDecorationLine: 'underline',
   },
   
   // Warning
@@ -1534,5 +1615,29 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     fontFamily: 'monospace',
     marginBottom: SPACING.xs,
+  },
+  debugActions: {
+    flexDirection: 'row',
+    marginTop: SPACING.md,
+    gap: SPACING.sm,
+  },
+  debugButton: {
+    backgroundColor: COLORS.surfaceLight,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.sm,
+  },
+  debugButtonText: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.primary,
+  },
+  debugToggle: {
+    alignSelf: 'center',
+    marginTop: SPACING.lg,
+    padding: SPACING.sm,
+  },
+  debugToggleText: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textMuted,
   },
 });
