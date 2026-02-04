@@ -71,7 +71,10 @@ export default function SettleScreen() {
   const [solBalance, setSolBalance] = useState<number | null>(null);
   const [balanceFetchFailed, setBalanceFetchFailed] = useState(false);
   
+  // Guards to prevent concurrent operations and infinite loops
   const isSendingRef = useRef(false);
+  const isLoadingBalancesRef = useRef(false);
+  const loadBalancesCalledRef = useRef(false);
   
   const recipient = group?.members.find(m => m.wallet === to);
   const recipientDisplay = recipient?.nickname || 
@@ -82,11 +85,12 @@ export default function SettleScreen() {
   const parsedAmount = parseFloat(amount) || 0;
   
   const loadBalances = useCallback(async () => {
-    if (!publicKey) {
-      setStatus('idle');
+    // Guard: don't run if already loading or no publicKey
+    if (isLoadingBalancesRef.current || !publicKey) {
       return;
     }
     
+    isLoadingBalancesRef.current = true;
     setStatus('loading-balance');
     setError('');
     setErrorType(null);
@@ -118,13 +122,25 @@ export default function SettleScreen() {
       }
       setErrorType('network');
     } finally {
+      isLoadingBalancesRef.current = false;
       setStatus('idle');
     }
   }, [publicKey]);
   
+  // Effect to load balances ONCE when wallet is ready
   useEffect(() => {
-    loadBalances();
-  }, [loadBalances]);
+    if (publicKey && !loadBalancesCalledRef.current) {
+      loadBalancesCalledRef.current = true;
+      loadBalances();
+    }
+  }, [publicKey, loadBalances]);
+  
+  // Reset on disconnect
+  useEffect(() => {
+    if (!publicKey) {
+      loadBalancesCalledRef.current = false;
+    }
+  }, [publicKey]);
   
   const handleAmountChange = (text: string) => {
     const cleaned = text.replace(/[^0-9.]/g, '');
@@ -299,6 +315,12 @@ export default function SettleScreen() {
     }
   };
   
+  // Manual retry for balance loading
+  const handleRetryBalances = () => {
+    loadBalancesCalledRef.current = false;
+    loadBalances();
+  };
+  
   const handleRetry = () => {
     if (txSignature) {
       handleCheckStatus();
@@ -306,7 +328,7 @@ export default function SettleScreen() {
       setStatus('idle');
       setError('');
       setErrorType(null);
-      loadBalances();
+      handleRetryBalances();
     }
   };
   
@@ -625,7 +647,7 @@ export default function SettleScreen() {
                     : `${(solBalance ?? 0).toFixed(4)} SOL`
                   }
                 </Text>
-                <TouchableOpacity onPress={loadBalances}>
+                <TouchableOpacity onPress={handleRetryBalances}>
                   <Text style={styles.refreshText}>Refresh</Text>
                 </TouchableOpacity>
               </>

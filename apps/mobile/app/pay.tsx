@@ -10,7 +10,8 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { useWalletPublicKey, useIsConnected } from '../stores/walletStore';
+import { useWalletPublicKey, useIsConnected, useIsBooting } from '../stores/walletStore';
+import { useWalletConnection } from '../hooks/useWalletConnection';
 import { useGroupStore } from '../stores/groupStore';
 import { Button, Card, NetworkBadge, SpliterLogo } from '../components';
 import { 
@@ -52,6 +53,8 @@ export default function PayScreen() {
   
   const publicKey = useWalletPublicKey();
   const isConnected = useIsConnected();
+  const isBooting = useIsBooting();
+  const { connect } = useWalletConnection();
   const addTxHistory = useGroupStore((state) => state.addTxHistory);
   const updateTxStatus = useGroupStore((state) => state.updateTxStatus);
   
@@ -68,8 +71,12 @@ export default function PayScreen() {
   const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
   const [solBalance, setSolBalance] = useState<number | null>(null);
   const [balanceFetchFailed, setBalanceFetchFailed] = useState(false);
+  const [balanceLoaded, setBalanceLoaded] = useState(false);
   
+  // Guards to prevent concurrent operations and infinite loops
   const isSendingRef = useRef(false);
+  const isLoadingBalancesRef = useRef(false);
+  const loadBalancesCalledRef = useRef(false);
   
   const networkName = getNetworkName();
   const faucetUrl = getFaucetUrl();
@@ -79,13 +86,14 @@ export default function PayScreen() {
   const feeAmount = params ? calculateFee(params.amount) : 0;
   const totalAmount = params ? params.amount + feeAmount : 0;
   
+  // Load balances - with in-flight guard to prevent concurrent calls
   const loadBalances = useCallback(async () => {
-    if (!publicKey) {
-      // No wallet - can't load balances, but don't block UI
-      setStatus('idle');
+    // Guard: don't run if already loading or no publicKey
+    if (isLoadingBalancesRef.current || !publicKey) {
       return;
     }
     
+    isLoadingBalancesRef.current = true;
     setStatus('loading-balance');
     setError('');
     setErrorType(null);
@@ -103,6 +111,7 @@ export default function PayScreen() {
       
       setUsdcBalance(usdc);
       setSolBalance(sol);
+      setBalanceLoaded(true);
       
       if (sol < MIN_SOL_FOR_FEES) {
         setError(`You need about ${MIN_SOL_FOR_FEES} SOL for network fees`);
@@ -111,6 +120,7 @@ export default function PayScreen() {
     } catch (err: any) {
       console.error('Failed to load balances:', err);
       setBalanceFetchFailed(true);
+      setBalanceLoaded(true);
       
       if (isTimeoutError(err)) {
         setError('Balance loading timed out. You can still try to pay.');
@@ -118,18 +128,32 @@ export default function PayScreen() {
         setError('Unable to load balances. You can still try to pay.');
       }
       setErrorType('network');
-      // Don't set fake balances - keep them null to show we couldn't fetch
     } finally {
-      // Always exit loading state
+      isLoadingBalancesRef.current = false;
       setStatus('idle');
     }
   }, [publicKey]);
   
+  // Effect to load balances ONCE when wallet connects
+  // Uses refs to prevent infinite loops
   useEffect(() => {
-    if (isConnected && params) {
+    // Only load once when:
+    // 1. Wallet is connected (publicKey exists)
+    // 2. Params are valid
+    // 3. Haven't already loaded/attempted
+    if (publicKey && params && !loadBalancesCalledRef.current) {
+      loadBalancesCalledRef.current = true;
       loadBalances();
     }
-  }, [loadBalances, isConnected, params]);
+  }, [publicKey, params, loadBalances]);
+  
+  // Reset the "called" ref when publicKey changes (reconnect scenario)
+  useEffect(() => {
+    if (!publicKey) {
+      loadBalancesCalledRef.current = false;
+      setBalanceLoaded(false);
+    }
+  }, [publicKey]);
   
   const validatePayment = (): boolean => {
     if (!feeConfigured) {
@@ -281,6 +305,14 @@ export default function PayScreen() {
     }
   };
   
+  // Retry balance fetch (manual user action)
+  const handleRetryBalances = () => {
+    loadBalancesCalledRef.current = false;
+    setBalanceLoaded(false);
+    setBalanceFetchFailed(false);
+    loadBalances();
+  };
+  
   const handleRetry = () => {
     if (txSignature) {
       handleCheckStatus();
@@ -288,7 +320,7 @@ export default function PayScreen() {
       setStatus('idle');
       setError('');
       setErrorType(null);
-      loadBalances();
+      handleRetryBalances();
     }
   };
   
@@ -317,6 +349,11 @@ export default function PayScreen() {
     setError('');
   };
   
+  // Handle connect wallet from pay screen
+  const handleConnectWallet = async () => {
+    await connect();
+  };
+  
   // ========== INVALID PARAMS ==========
   if (!validation.valid) {
     return (
@@ -334,6 +371,21 @@ export default function PayScreen() {
     );
   }
   
+  // ========== BOOTING (hydrating stores) ==========
+  if (isBooting) {
+    return (
+      <>
+        <Stack.Screen options={{ title: 'Loading...' }} />
+        <View style={styles.container}>
+          <View style={styles.centerContent}>
+            <ActivityIndicator color={COLORS.primary} size="large" />
+            <Text style={styles.checkingText}>Loading...</Text>
+          </View>
+        </View>
+      </>
+    );
+  }
+  
   // ========== NOT CONNECTED ==========
   if (!isConnected) {
     return (
@@ -341,12 +393,35 @@ export default function PayScreen() {
         <Stack.Screen options={{ title: 'Connect Wallet' }} />
         <View style={styles.container}>
           <View style={styles.centerContent}>
-            <Text style={styles.errorEmoji}>🔗</Text>
-            <Text style={styles.errorTitle}>Wallet Not Connected</Text>
-            <Text style={styles.errorMessage}>
-              Please connect your wallet to make this payment.
+            <SpliterLogo size={80} style={styles.connectLogo} />
+            <Text style={styles.connectTitle}>Connect Wallet to Pay</Text>
+            <Text style={styles.connectMessage}>
+              Connect your wallet to complete this payment request.
             </Text>
-            <Button title="Go to Home" onPress={() => router.replace('/')} />
+            
+            {/* Show payment preview */}
+            {params && (
+              <Card style={styles.previewCard}>
+                <Text style={styles.previewLabel}>Payment Request</Text>
+                <Text style={styles.previewAmount}>
+                  {params.currency === 'USDC' ? '$' : ''}{params.amount.toFixed(params.currency === 'USDC' ? 2 : 4)} {params.currency}
+                </Text>
+                <Text style={styles.previewTo}>to {shortenAddress(params.to, 6)}</Text>
+              </Card>
+            )}
+            
+            <Button 
+              title="Connect Wallet" 
+              onPress={handleConnectWallet} 
+              size="large"
+              style={styles.connectButton}
+            />
+            <Button 
+              title="Cancel" 
+              onPress={handleClose} 
+              variant="outline"
+              style={styles.cancelButton}
+            />
           </View>
         </View>
       </>
@@ -635,10 +710,13 @@ export default function PayScreen() {
   }
   
   // ========== MAIN SCREEN ==========
-  // At this point params must be valid (we returned early for invalid)
   if (!params) {
     return null; // TypeScript guard - should never reach here
   }
+  
+  // Determine CTA state
+  const isLoadingBalance = status === 'loading-balance';
+  const canProceed = balanceFetchFailed || (balanceLoaded && solBalance !== null && solBalance >= MIN_SOL_FOR_FEES);
   
   return (
     <>
@@ -702,16 +780,19 @@ export default function PayScreen() {
           
           {/* Balance */}
           <View style={styles.balanceRow}>
-            {status === 'loading-balance' ? (
-              <ActivityIndicator color={COLORS.textSecondary} size="small" />
+            {isLoadingBalance ? (
+              <>
+                <ActivityIndicator color={COLORS.textSecondary} size="small" />
+                <Text style={styles.balanceText}>Loading balance...</Text>
+              </>
             ) : balanceFetchFailed ? (
               <>
                 <Text style={styles.balanceTextError}>Balance unavailable</Text>
-                <TouchableOpacity onPress={loadBalances}>
+                <TouchableOpacity onPress={handleRetryBalances}>
                   <Text style={styles.refreshText}>Retry</Text>
                 </TouchableOpacity>
               </>
-            ) : (
+            ) : balanceLoaded ? (
               <>
                 <Text style={styles.balanceText}>
                   Your Balance: {params.currency === 'USDC' 
@@ -719,11 +800,11 @@ export default function PayScreen() {
                     : `${(solBalance ?? 0).toFixed(4)} SOL`
                   }
                 </Text>
-                <TouchableOpacity onPress={loadBalances}>
+                <TouchableOpacity onPress={handleRetryBalances}>
                   <Text style={styles.refreshText}>Refresh</Text>
                 </TouchableOpacity>
               </>
-            )}
+            ) : null}
           </View>
           
           {/* Balance fetch error - show warning but allow proceed */}
@@ -736,7 +817,7 @@ export default function PayScreen() {
           )}
           
           {/* Low SOL Warning - only show if balances loaded successfully */}
-          {!balanceFetchFailed && solBalance !== null && solBalance < MIN_SOL_FOR_FEES && (
+          {!balanceFetchFailed && balanceLoaded && solBalance !== null && solBalance < MIN_SOL_FOR_FEES && (
             <View style={styles.warningBanner}>
               <Text style={styles.warningBannerText}>
                 ⚠️ Low SOL! You need ~{MIN_SOL_FOR_FEES} SOL for fees.
@@ -749,7 +830,7 @@ export default function PayScreen() {
             </View>
           )}
           
-          {error && errorType !== 'fee' && !balanceFetchFailed && (
+          {error && errorType !== 'fee' && errorType !== 'network' && (
             <Text style={styles.formError}>{error}</Text>
           )}
           
@@ -759,18 +840,15 @@ export default function PayScreen() {
         <View style={styles.footer}>
           <Button
             title={
-              status === 'loading-balance' 
+              isLoadingBalance 
                 ? 'Loading...' 
                 : balanceFetchFailed 
                   ? 'Pay Anyway' 
                   : 'Continue to Pay'
             }
             onPress={handleProceedToConfirm}
-            disabled={
-              status === 'loading-balance' || 
-              (!balanceFetchFailed && (solBalance === null || solBalance < MIN_SOL_FOR_FEES))
-            }
-            loading={status === 'loading-balance'}
+            disabled={isLoadingBalance || !canProceed}
+            loading={isLoadingBalance}
             size="large"
             fullWidth
           />
@@ -794,6 +872,51 @@ const styles = StyleSheet.create({
     alignItems: 'center', 
     justifyContent: 'center', 
     padding: SPACING.xl,
+  },
+  
+  // Connect Wallet Screen
+  connectLogo: {
+    marginBottom: SPACING.xl,
+  },
+  connectTitle: {
+    ...TYPOGRAPHY.h2,
+    color: COLORS.text,
+    marginBottom: SPACING.sm,
+    textAlign: 'center',
+  },
+  connectMessage: {
+    ...TYPOGRAPHY.body,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    marginBottom: SPACING['2xl'],
+    maxWidth: 280,
+  },
+  previewCard: {
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: SPACING['2xl'],
+    paddingVertical: SPACING.xl,
+  },
+  previewLabel: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.sm,
+  },
+  previewAmount: {
+    ...TYPOGRAPHY.h1,
+    color: COLORS.text,
+    marginBottom: SPACING.xs,
+  },
+  previewTo: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textMuted,
+  },
+  connectButton: {
+    width: '100%',
+    marginBottom: SPACING.md,
+  },
+  cancelButton: {
+    width: '100%',
   },
   
   // Request Header
@@ -902,6 +1025,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center', 
     marginBottom: SPACING.lg, 
     gap: SPACING.md,
+    minHeight: 24,
   },
   balanceText: { 
     ...TYPOGRAPHY.small,
