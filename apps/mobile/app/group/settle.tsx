@@ -43,7 +43,14 @@ import {
 } from '../../lib/solana';
 import { SettleStatus, SettleErrorType } from '../../lib/types';
 import { withTimeout, isTimeoutError } from '../../lib/timeout';
-import { categorizePaymentError, PaymentError, getErrorEmoji } from '../../lib/errors';
+import { 
+  categorizePaymentError, 
+  PaymentError, 
+  getErrorEmoji,
+  shouldShowOpenWallet,
+  getErrorActionText,
+} from '../../lib/errors';
+import { getSolanaNetwork } from '../../lib/constants';
 
 type Currency = 'USDC' | 'SOL';
 
@@ -240,9 +247,12 @@ export default function SettleScreen() {
     setStatus('confirming');
   };
   
+  // Generate attempt ID for logging correlation
+  const sendAttemptRef = useRef(0);
+  
   const handleSendTransaction = async () => {
     if (isSendingRef.current || txSignature) {
-      console.warn('Prevented double-send');
+      console.warn('[settle][send] Prevented double-send');
       return;
     }
     
@@ -251,6 +261,18 @@ export default function SettleScreen() {
       setStatus('idle');
       return;
     }
+    
+    const attemptId = ++sendAttemptRef.current;
+    const network = getSolanaNetwork();
+    
+    console.log('[settle][send] START', {
+      attemptId,
+      payer: `${publicKey.slice(0, 8)}...`,
+      to: `${to.slice(0, 8)}...`,
+      amount: parsedAmount,
+      currency,
+      network,
+    });
     
     isSendingRef.current = true;
     setStatus('signing');
@@ -262,6 +284,8 @@ export default function SettleScreen() {
       const signature = currency === 'USDC'
         ? await sendUsdcTransfer(publicKey, to, parsedAmount)
         : await sendSolTransfer(publicKey, to, parsedAmount);
+      
+      console.log('[settle][send] TX_SUBMITTED', { attemptId, signature: signature.slice(0, 16) + '...' });
       
       setTxSignature(signature);
       
@@ -300,16 +324,24 @@ export default function SettleScreen() {
         setErrorType('timeout');
       }
     } catch (err: any) {
-      console.error('Settlement error:', err);
+      const rawError = err?.message || String(err);
+      console.error('[settle][send] ERROR', { 
+        attemptId, 
+        error: rawError,
+        errorName: err?.name,
+      });
       
       // Use new categorization system
       const payErr = categorizePaymentError(err);
+      console.log('[settle][send] CATEGORIZED', { attemptId, type: payErr.type });
+      
       setPaymentError(payErr);
       setError(payErr.message);
       
       // Map to legacy errorType for UI compatibility
       const typeMap: Record<string, SettleErrorType> = {
         'wallet_rejected': 'rejected',
+        'wallet_network_mismatch': 'general',
         'insufficient_sol': 'fee',
         'insufficient_balance': 'balance',
         'timeout': 'timeout',

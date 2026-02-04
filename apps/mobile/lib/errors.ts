@@ -5,27 +5,90 @@
  * for user-facing error messages.
  */
 
+import { getSolanaNetwork } from './constants';
+
 // ============================================
 // Error Types
 // ============================================
 
 export type PaymentErrorType =
-  | 'rpc_unavailable'     // All RPCs down
-  | 'blockhash_failed'    // Couldn't get blockhash
-  | 'insufficient_sol'    // Not enough SOL for fees
-  | 'insufficient_balance'// Not enough USDC/SOL
-  | 'wallet_rejected'     // User rejected in wallet
-  | 'wallet_unavailable'  // Wallet app not responding
-  | 'timeout'             // Operation timed out
-  | 'network'             // Network/connectivity issue
-  | 'tx_failed'           // Transaction failed on-chain
-  | 'unknown';            // Catch-all
+  | 'rpc_unavailable'      // All RPCs down
+  | 'blockhash_failed'     // Couldn't get blockhash
+  | 'insufficient_sol'     // Not enough SOL for fees
+  | 'insufficient_balance' // Not enough USDC/SOL
+  | 'wallet_rejected'      // User rejected in wallet
+  | 'wallet_unavailable'   // Wallet app not responding
+  | 'wallet_network_mismatch' // Wallet on wrong network (e.g., devnet vs mainnet)
+  | 'timeout'              // Operation timed out
+  | 'network'              // Network/connectivity issue
+  | 'tx_failed'            // Transaction failed on-chain
+  | 'unknown';             // Catch-all
 
 export interface PaymentError {
   type: PaymentErrorType;
   message: string;
   recoverable: boolean;
   userAction?: string;
+  /** For network mismatch: expected network */
+  expectedNetwork?: string;
+  /** For network mismatch: detected wallet network (if known) */
+  walletNetwork?: string;
+}
+
+// ============================================
+// Network Mismatch Detection
+// ============================================
+
+/**
+ * Heuristics to detect if error might be caused by wallet network mismatch.
+ * 
+ * Common indicators:
+ * - CancellationException after wallet showed network warning
+ * - Transaction simulation fails with account-not-found on mainnet (devnet account)
+ * - Blockhash mismatch (different chain)
+ */
+function isLikelyNetworkMismatch(error: any): boolean {
+  const message = String(error?.message ?? error ?? '').toLowerCase();
+  
+  // CancellationException often happens when user dismisses network warning
+  if (message.includes('cancellationexception')) {
+    return true;
+  }
+  
+  // Account doesn't exist on this cluster
+  if (message.includes('account not found') || 
+      message.includes('could not find account') ||
+      message.includes('invalid account data')) {
+    return true;
+  }
+  
+  // Simulation with wrong accounts
+  if (message.includes('simulation failed') && 
+      (message.includes('account') || message.includes('owner'))) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Create a network mismatch error with helpful instructions
+ */
+export function createNetworkMismatchError(expectedNetwork: string, walletNetwork?: string): PaymentError {
+  const networkName = expectedNetwork === 'mainnet-beta' ? 'Mainnet' : 'Devnet';
+  const walletNetworkName = walletNetwork === 'devnet' ? 'Devnet' : 
+                           walletNetwork === 'mainnet-beta' ? 'Mainnet' : 'a different network';
+  
+  return {
+    type: 'wallet_network_mismatch',
+    message: walletNetwork 
+      ? `Your wallet is set to ${walletNetworkName}, but this app requires ${networkName}.`
+      : `Please make sure your wallet is set to ${networkName}.`,
+    recoverable: true,
+    userAction: `Open your wallet app → Settings → Network → Select ${networkName}`,
+    expectedNetwork,
+    walletNetwork,
+  };
 }
 
 // ============================================
@@ -37,13 +100,19 @@ export interface PaymentError {
  */
 export function categorizePaymentError(error: any): PaymentError {
   const message = String(error?.message ?? error ?? '').toLowerCase();
+  const expectedNetwork = getSolanaNetwork();
   
   // Check for RpcError (from our rpc.ts)
   if (error?.name === 'RpcError') {
     return handleRpcError(error);
   }
   
-  // Wallet rejected
+  // Check for likely network mismatch FIRST (before generic cancelled check)
+  if (isLikelyNetworkMismatch(error)) {
+    return createNetworkMismatchError(expectedNetwork);
+  }
+  
+  // Wallet rejected / cancelled
   if (message.includes('user rejected') || 
       message.includes('rejected by user') ||
       message.includes('user declined') ||
@@ -54,7 +123,7 @@ export function categorizePaymentError(error: any): PaymentError {
       type: 'wallet_rejected',
       message: 'Transaction cancelled',
       recoverable: true,
-      userAction: 'Try again when ready',
+      userAction: 'Tap "Pay Now" to try again',
     };
   }
   
@@ -253,6 +322,8 @@ export function getErrorEmoji(type: PaymentErrorType): string {
       return '✋';
     case 'wallet_unavailable':
       return '📱';
+    case 'wallet_network_mismatch':
+      return '🔀';
     case 'timeout':
       return '⏱️';
     case 'tx_failed':
@@ -272,8 +343,19 @@ export function getErrorActionText(error: PaymentError, hasTxSignature: boolean)
   if (error.type === 'wallet_rejected') {
     return 'Try Again';
   }
+  if (error.type === 'wallet_network_mismatch') {
+    return 'I Fixed It - Retry';
+  }
   if (error.recoverable) {
     return 'Retry';
   }
   return 'Go Back';
+}
+
+/**
+ * Should we show "Open Wallet" button?
+ */
+export function shouldShowOpenWallet(error: PaymentError): boolean {
+  return error.type === 'wallet_network_mismatch' || 
+         error.type === 'wallet_unavailable';
 }

@@ -43,7 +43,13 @@ import {
 import { validatePayLinkParams, PayLinkParams, shortenAddress } from '../lib/validation';
 import { SettleStatus, SettleErrorType } from '../lib/types';
 import { withTimeout, isTimeoutError } from '../lib/timeout';
-import { categorizePaymentError, PaymentError, getErrorEmoji } from '../lib/errors';
+import { 
+  categorizePaymentError, 
+  PaymentError, 
+  getErrorEmoji, 
+  shouldShowOpenWallet,
+  getErrorActionText,
+} from '../lib/errors';
 
 export default function PayScreen() {
   const router = useRouter();
@@ -299,9 +305,12 @@ export default function PayScreen() {
     setStatus('confirming');
   };
   
+  // Generate attempt ID for logging correlation
+  const sendAttemptRef = useRef(0);
+  
   const handleSendTransaction = async () => {
     if (isSendingRef.current || txSignature) {
-      console.warn('Prevented double-send');
+      console.warn('[pay][send] Prevented double-send');
       return;
     }
     
@@ -310,6 +319,19 @@ export default function PayScreen() {
       setStatus('idle');
       return;
     }
+    
+    const attemptId = ++sendAttemptRef.current;
+    const network = getSolanaNetwork();
+    
+    console.log('[pay][send] START', {
+      attemptId,
+      payer: `${publicKey.slice(0, 8)}...${publicKey.slice(-4)}`,
+      to: `${params.to.slice(0, 8)}...${params.to.slice(-4)}`,
+      amount: params.amount,
+      currency: params.currency,
+      network,
+      rpc: getSolanaRpcUrl(),
+    });
     
     isSendingRef.current = true;
     setStatus('signing');
@@ -321,6 +343,8 @@ export default function PayScreen() {
       const signature = params.currency === 'USDC'
         ? await sendUsdcTransferWithFee(publicKey, params.to, params.amount, feeAmount)
         : await sendSolTransferWithFee(publicKey, params.to, params.amount, feeAmount);
+      
+      console.log('[pay][send] TX_SUBMITTED', { attemptId, signature: signature.slice(0, 16) + '...' });
       
       setTxSignature(signature);
       
@@ -338,28 +362,40 @@ export default function PayScreen() {
       const result = await waitForConfirmation(signature);
       
       if (result.status === 'confirmed') {
+        console.log('[pay][send] CONFIRMED', { attemptId, signature: signature.slice(0, 16) + '...' });
         await updateTxStatus(signature, 'confirmed');
         setStatus('success');
       } else if (result.status === 'failed') {
+        console.log('[pay][send] FAILED_ONCHAIN', { attemptId, error: result.error });
         await updateTxStatus(signature, 'failed', result.error);
         setError(result.error || 'Transaction failed');
         setErrorType('general');
         setStatus('error');
       } else {
+        console.log('[pay][send] TIMEOUT_PENDING', { attemptId });
         setError('Taking longer than expected. Check status below.');
         setErrorType('timeout');
       }
     } catch (err: any) {
-      console.error('Payment error:', err);
+      const rawError = err?.message || String(err);
+      console.error('[pay][send] ERROR', { 
+        attemptId, 
+        error: rawError,
+        errorName: err?.name,
+        network,
+      });
       
       // Use new categorization system
       const payErr = categorizePaymentError(err);
+      console.log('[pay][send] CATEGORIZED', { attemptId, type: payErr.type, message: payErr.message });
+      
       setPaymentError(payErr);
       setError(payErr.message);
       
       // Map to legacy errorType for UI compatibility
       const typeMap: Record<string, SettleErrorType> = {
         'wallet_rejected': 'rejected',
+        'wallet_network_mismatch': 'general', // Special handling in UI
         'insufficient_sol': 'fee',
         'insufficient_balance': 'balance',
         'timeout': 'timeout',
@@ -666,21 +702,39 @@ export default function PayScreen() {
   if (status === 'error') {
     const errorEmoji = paymentError ? getErrorEmoji(paymentError.type) : '⚠️';
     const showFaucet = (errorType === 'fee' || paymentError?.type === 'insufficient_sol') && faucetUrl;
-    const actionText = txSignature 
-      ? "Check Status" 
-      : (paymentError?.recoverable ? "Try Again" : "Go Back");
+    const isNetworkMismatch = paymentError?.type === 'wallet_network_mismatch';
+    const showOpenWallet = paymentError && shouldShowOpenWallet(paymentError);
+    const actionText = paymentError 
+      ? getErrorActionText(paymentError, !!txSignature)
+      : (txSignature ? "Check Status" : "Try Again");
     
     return (
       <>
-        <Stack.Screen options={{ title: 'Payment Failed' }} />
+        <Stack.Screen options={{ title: isNetworkMismatch ? 'Wrong Network' : 'Payment Failed' }} />
         <View style={styles.container}>
           <View style={styles.centerContent}>
             <Text style={styles.errorEmoji}>{errorEmoji}</Text>
-            <Text style={styles.errorTitle}>Payment Failed</Text>
+            <Text style={styles.errorTitle}>
+              {isNetworkMismatch ? 'Wallet Network Mismatch' : 'Payment Failed'}
+            </Text>
             <Text style={styles.errorMessage}>{error}</Text>
             
             {paymentError?.userAction && (
-              <Text style={styles.errorHint}>{paymentError.userAction}</Text>
+              <View style={styles.errorHintBox}>
+                <Text style={styles.errorHintTitle}>How to fix:</Text>
+                <Text style={styles.errorHint}>{paymentError.userAction}</Text>
+              </View>
+            )}
+            
+            {isNetworkMismatch && (
+              <View style={styles.networkMismatchCard}>
+                <Text style={styles.networkMismatchLabel}>This app requires:</Text>
+                <View style={styles.networkMismatchBadge}>
+                  <Text style={styles.networkMismatchBadgeText}>
+                    {getSolanaNetwork() === 'mainnet-beta' ? '🟢 Mainnet' : '🟡 Devnet'}
+                  </Text>
+                </View>
+              </View>
             )}
             
             {txSignature && (
@@ -699,19 +753,37 @@ export default function PayScreen() {
             )}
           </View>
           
-          <View style={styles.footerRow}>
+          <View style={styles.footerColumn}>
+            {showOpenWallet && (
+              <Button 
+                title="Open Wallet App" 
+                onPress={() => {
+                  // Try to open wallet app - this is best effort
+                  // Most wallets use solana: scheme or their own scheme
+                  Linking.openURL('solana:').catch(() => {
+                    // If that fails, just log - user will have to open manually
+                    console.log('[pay] Could not open wallet app automatically');
+                  });
+                }} 
+                variant="outline"
+                size="large"
+                fullWidth
+                style={styles.footerButton}
+              />
+            )}
             <Button 
               title={actionText} 
               onPress={paymentError?.recoverable || txSignature ? handleRetry : handleClose} 
               size="large"
-              style={styles.flexButton}
+              fullWidth
+              style={styles.footerButton}
             />
             <Button 
               title="Cancel" 
               onPress={handleClose} 
-              variant="outline" 
+              variant="ghost" 
               size="large"
-              style={styles.flexButton}
+              fullWidth
             />
           </View>
         </View>
@@ -1526,12 +1598,54 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
     maxWidth: 280,
   },
+  errorHintBox: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
+    marginBottom: SPACING.lg,
+    width: '100%',
+    maxWidth: 300,
+  },
+  errorHintTitle: {
+    ...TYPOGRAPHY.smallMedium,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.sm,
+  },
   errorHint: {
     ...TYPOGRAPHY.small,
-    color: COLORS.textMuted,
-    textAlign: 'center',
-    marginBottom: SPACING['2xl'],
-    maxWidth: 280,
+    color: COLORS.text,
+  },
+  networkMismatchCard: {
+    backgroundColor: COLORS.warningMuted,
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
+    marginBottom: SPACING.xl,
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 300,
+  },
+  networkMismatchLabel: {
+    ...TYPOGRAPHY.small,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.sm,
+  },
+  networkMismatchBadge: {
+    backgroundColor: COLORS.background,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.full,
+  },
+  networkMismatchBadgeText: {
+    ...TYPOGRAPHY.bodyMedium,
+    color: COLORS.text,
+  },
+  footerColumn: {
+    padding: SPACING.xl,
+    paddingBottom: SPACING['4xl'],
+    gap: SPACING.md,
+  },
+  footerButton: {
+    marginBottom: SPACING.sm,
   },
   errorEmoji: { 
     fontSize: 48, 
